@@ -1,0 +1,25 @@
+# 编译产物目录
+build/
+bin/
+lib/
+
+# CMake临时文件
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+
+# OpenCV 临时文件
+*.png
+*.jpg
+*.bmp
+
+# 系统临时文件
+*.tmp
+*.log
+.DS_Store/
+Thumbs.db
+
+# 可执行文件
+aruco_gimbal_control
