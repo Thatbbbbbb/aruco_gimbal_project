@@ -6,16 +6,14 @@
 #include <iostream>
 #include <unistd.h>
 
-// 海康相机初始化（使用配置文件参数）
+// 海康相机初始化（不变）
 cv::VideoCapture initHikCamera(const ProjectConfig& config) {
-    // 如果使用海康MVS SDK，请替换为SDK的相机打开逻辑
     cv::VideoCapture cap(config.camera_index);
     if (!cap.isOpened()) {
         std::cerr << "Failed to open Hik camera! Index: " << config.camera_index << std::endl;
         exit(EXIT_FAILURE);
     }
 
-    // 从配置文件设置相机参数
     cap.set(cv::CAP_PROP_FRAME_WIDTH, config.camera_width);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, config.camera_height);
     cap.set(cv::CAP_PROP_FPS, config.camera_fps);
@@ -26,30 +24,31 @@ cv::VideoCapture initHikCamera(const ProjectConfig& config) {
 int main(int argc, char** argv) {
     // 1. 加载YAML配置文件
     ProjectConfig config;
-    std::string yaml_path = "../config/gimbal_aruco_config.yaml"; // 对应build目录外的config文件
+    std::string yaml_path = "../config/gimbal_aruco_config.yaml";
     if (!ConfigParser::loadConfig(yaml_path, config)) {
         std::cerr << "Failed to load config file!" << std::endl;
         return -1;
     }
 
-    // 2. 初始化Aruco检测器（使用配置文件参数）
+    // 2. 初始化Aruco检测器
     ArucoDetector aruco_detector(config.camera_matrix, config.dist_coeffs,
                                  config.aruco_dict_id, config.marker_size);
 
-    // 3. 初始化串口（使用配置文件参数）
+    // 3. 初始化串口（传入新配置）
     SerialPort serial;
-    if (!serial.init(config.serial_port, config.serial_baudrate)) {
+    if (!serial.init(config.serial_port, config.serial_config)) {
         std::cerr << "Failed to init serial port!" << std::endl;
         return -1;
     }
 
-    // 4. 初始化海康相机（使用配置文件参数）
+    // 4. 初始化海康相机
     cv::VideoCapture cap = initHikCamera(config);
 
     // 5. 主循环
     cv::Mat frame;
     GimbalData current_gimbal, target_gimbal;
     cv::Vec3d marker_cam_coord;
+    bool is_timeout;
 
     while (true) {
         cap >> frame;
@@ -67,18 +66,22 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // 7. 接收云台当前角度
-        if (!serial.receiveGimbalData(current_gimbal)) {
-            std::cerr << "Failed to receive gimbal data!" << std::endl;
-            continue;
+        // 7. 接收云台当前角度（带超时+重传）
+        if (!serial.receiveGimbalData(current_gimbal, is_timeout)) {
+            if (is_timeout) {
+                std::cerr << "Receive gimbal data timeout!" << std::endl;
+            } else {
+                std::cerr << "Receive gimbal data error (check frame/crc)!" << std::endl;
+            }
+            continue; // 接收失败则跳过发送，保证交互顺序
         }
 
-        // 8. 坐标转换：使用配置文件中的云台位置，计算瞄准角度
+        // 8. 坐标转换
         camToGimbalTransform(marker_cam_coord, config.gimbal_pos_in_cam, target_gimbal.yaw, target_gimbal.pitch);
 
-        // 9. 发送目标角度给云台
+        // 9. 发送目标角度给云台（带重传）
         if (!serial.sendGimbalData(target_gimbal)) {
-            std::cerr << "Failed to send gimbal data!" << std::endl;
+            std::cerr << "Send gimbal data failed after retry!" << std::endl;
             continue;
         }
 
@@ -92,7 +95,7 @@ int main(int argc, char** argv) {
         cv::imshow("Frame", frame);
         if (cv::waitKey(1) == 27) break;
 
-        // 12. 从配置文件加载延迟时间
+        // 12. 循环延迟
         usleep(config.loop_delay_ms * 1000);
     }
 

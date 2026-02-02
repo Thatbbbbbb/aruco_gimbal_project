@@ -1,27 +1,24 @@
 # 串口配置
 serial_config:
   port_name: "/dev/ttyUSB0"  # Linux: /dev/ttyUSB0, Windows: COMx
-  baudrate: 115200           # 波特率固定115200
+  baudrate: 115200           # 波特率
+  retry_times: 3             # 重传次数（容错）
+  timeout_ms: 1000           # 通信超时（ms）
+  crc_check: true            # 是否开启CRC校验
 
-# 相机配置
+# 其他配置不变...
 camera_config:
   camera_index: 0            # 相机设备索引
   width: 1280                # 图像宽度
   height: 720                # 图像高度
   fps: 30                    # 帧率
-  # 相机内参（3x3 矩阵，需提前标定）
-  camera_matrix: [1000.0, 0.0, 640.0, 0.0, 1000.0, 360.0, 0.0, 0.0, 1.0]
-  # 相机畸变参数（1x5 矩阵，k1,k2,p1,p2,k3）
-  dist_coeffs: [0.1, -0.05, 0.0, 0.0, 0.0]
+camera_matrix: [2479.79773265868, 0, 624.843541232562, 0, 2478.98595904058, 516.678095396654, 0, 0, 1]
+dist_coeffs: [-0.0896322190932089, 0.486000473389527, 0, 0, 0]
 
-# ArUco码配置
 aruco_config:
-  dict_id: "DICT_6X6_250"    # ArUco字典类型
-  marker_size: 0.1           # ArUco码实际尺寸（单位：米）
+  dict_id: "DICT_6X6_250"
+  marker_size: 0.12           #单位m，同下
 
-# 云台配置
 gimbal_config:
-  # 云台在相机坐标系下的位置（x,y,z，单位：米），可直接修改
-  position_in_cam: [0.2, 0.1, 0.0]
-  # 循环控制延迟（单位：毫秒）
+  position_in_cam: [0.0, 0.0, 0.91]
   loop_delay_ms: 30
