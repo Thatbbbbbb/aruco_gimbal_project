@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
 
     // 3. 初始化串口（传入新配置）
     SerialPort serial;
-    if (!serial.init(config.serial_port, config.serial_config)) {
+    if (!serial.init(config.serial_port, config.serial_baudrate)) {
         std::cerr << "Failed to init serial port!" << std::endl;
         return -1;
     }
