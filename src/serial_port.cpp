@@ -1,239 +1,259 @@
-// serial_port.cpp
-#include "serial_port.h"
+#include "serial_port.h"  // 对应你的头文件
+#include <iostream>
+#include <cstring>
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
-#include <cstring>
-#include <algorithm>
+#include <sys/time.h>
 
-// 1. 实现全局CRC8函数（你的原始代码，保留不变）
-uint8_t crc8(const uint8_t* data, uint32_t len) {
-    uint8_t crc = 0x00;
-    for (uint32_t i = 0; i < len; i++) {
-        crc ^= data[i];
-        for (uint32_t j = 0; j < 8; j++) {
-            if (crc & 0x80) {
-                crc = (crc << 1) ^ 0x07;
-            } else {
-                crc <<= 1;
-            }
-        }
+// 协议常量（适配double类型：3个double=24字节）
+const uint8_t FRAME_HEAD[] = {0xAA, 0x55};  // 帧头
+const uint8_t FRAME_TAIL[] = {0x0D, 0x0A};  // 帧尾
+const uint8_t DATA_LEN = 24;                // 3个double × 8字节 = 24字节
+
+namespace hitcrt {
+namespace serial {
+
+// 计算异或校验和
+static uint8_t calculate_checksum(const std::vector<uint8_t>& data) {
+    uint8_t checksum = 0;
+    for (uint8_t byte : data) {
+        checksum ^= byte;
     }
-    return crc;
+    return checksum;
 }
 
-// 2. 实现SerialPort析构函数（仅保留1份，删除重复）
+// 私double转8字节小端序
+static std::vector<uint8_t> double_to_bytes(double value) {
+    std::vector<uint8_t> bytes(8);
+    uint8_t* p = reinterpret_cast<uint8_t*>(&value);
+    for (int i = 0; i < 8; i++) {
+        bytes[i] = p[i];  // 小端序（x86/STM32默认）
+    }
+    return bytes;
+}
+
+// 8字节小端序转double
+static double bytes_to_double(const std::vector<uint8_t>& bytes) {
+    if (bytes.size() != 8) return 0.0;
+    double value;
+    uint8_t* p = reinterpret_cast<uint8_t*>(&value);
+    for (int i = 0; i < 8; i++) {
+        p[i] = bytes[i];
+    }
+    return value;
+}
+
+// 封装角度为协议帧
+static std::vector<uint8_t> pack_frame(const std::vector<double>& angles) {
+    std::vector<uint8_t> frame;
+
+    // 1. 帧头（2字节）
+    frame.insert(frame.end(), FRAME_HEAD, FRAME_HEAD + 2);
+    // 2. 数据长度（1字节）
+    frame.push_back(DATA_LEN);
+    // 3. 数据段：3个double（24字节）
+    auto b1 = double_to_bytes(angles[0]);
+    auto b2 = double_to_bytes(angles[1]);
+    auto b3 = double_to_bytes(angles[2]);
+    frame.insert(frame.end(), b1.begin(), b1.end());
+    frame.insert(frame.end(), b2.begin(), b2.end());
+    frame.insert(frame.end(), b3.begin(), b3.end());
+    // 4. 校验和（1字节：帧头+长度+数据段）
+    std::vector<uint8_t> check_data(frame.begin(), frame.end());
+    frame.push_back(calculate_checksum(check_data));
+    // 5. 帧尾（2字节）
+    frame.insert(frame.end(), FRAME_TAIL, FRAME_TAIL + 2);
+
+    return frame;
+}
+
+// 解析协议帧为角度
+static bool unpack_frame(const std::vector<uint8_t>& frame, std::vector<double>& angles) {
+    // 校验帧长度：2+1+24+1+2=30字节
+    if (frame.size() != 30) {
+        std::cerr << "[Serial] Frame length error! Expected 30, got " << frame.size() << std::endl;
+        return false;
+    }
+
+    // 校验帧头
+    if (frame[0] != FRAME_HEAD[0] || frame[1] != FRAME_HEAD[1]) {
+        std::cerr << "[Serial] Frame head error!" << std::endl;
+        return false;
+    }
+
+    // 校验数据长度
+    if (frame[2] != DATA_LEN) {
+        std::cerr << "[Serial] Data length error! Expected 24, got " << (int)frame[2] << std::endl;
+        return false;
+    }
+
+    // 校验帧尾
+    if (frame[28] != FRAME_TAIL[0] || frame[29] != FRAME_TAIL[1]) {
+        std::cerr << "[Serial] Frame tail error!" << std::endl;
+        return false;
+    }
+
+    // 校验和
+    std::vector<uint8_t> check_data(frame.begin(), frame.begin() + 27);
+    uint8_t expected = calculate_checksum(check_data);
+    uint8_t actual = frame[27];
+    if (expected != actual) {
+        std::cerr << "[Serial] Checksum error! Expected " << (int)expected 
+                  << ", got " << (int)actual << std::endl;
+        return false;
+    }
+
+    // 解析3个角度
+    std::vector<uint8_t> b1(frame.begin() + 3, frame.begin() + 11);
+    std::vector<uint8_t> b2(frame.begin() + 11, frame.begin() + 19);
+    std::vector<uint8_t> b3(frame.begin() + 19, frame.begin() + 27);
+    angles[0] = bytes_to_double(b1);
+    angles[1] = bytes_to_double(b2);
+    angles[2] = bytes_to_double(b3);
+
+    return true;
+}
+
+
+SerialPort::SerialPort(const std::string& port, int timeout) 
+    : port(port), timeout(timeout), fd(-1) {
+    memset(&old_tio, 0, sizeof(old_tio));
+}
+
 SerialPort::~SerialPort() {
-    close();  // 调用类的close()释放资源
+    close_port();
 }
 
-// 3. 实现私有成员函数：CRC16-MODBUS（保留不变）
-uint16_t SerialPort::calculateCRC16(const uint8_t* data, uint16_t len) {
-    uint16_t crc = 0xFFFF;
-    for (uint16_t i = 0; i < len; i++) {
-        crc ^= (uint16_t)data[i];
-        for (uint8_t j = 0; j < 8; j++) {
-            if (crc & 0x0001) {
-                crc >>= 1;
-                crc ^= 0xA001;
-            } else {
-                crc >>= 1;
-            }
-        }
+// 波特率固化115200，8N1，无流控，非阻塞模式，带超时机制
+bool SerialPort::open_port() {
+    fd = open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (fd < 0) {
+        std::cerr << "[Serial] Failed to open port: " << port << std::endl;
+        return false;
     }
-    return crc;
+
+    // 保存旧配置
+    if (tcgetattr(fd, &old_tio) < 0) {
+        std::cerr << "[Serial] Failed to get old serial config!" << std::endl;
+        close(fd);
+        fd = -1;
+        return false;
+    }
+
+    // 配置新串口参数
+    struct termios new_tio;
+    memset(&new_tio, 0, sizeof(new_tio));
+    new_tio.c_cflag = B115200 | CS8 | CLOCAL | CREAD;  
+    new_tio.c_cflag &= ~PARENB;  
+    new_tio.c_cflag &= ~CSTOPB; 
+    new_tio.c_cflag &= ~CRTSCTS; 
+
+    // 非规范模式（不处理回车/换行）
+    new_tio.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+    new_tio.c_oflag &= ~OPOST;
+
+    // 设置超时
+    new_tio.c_cc[VTIME] = timeout / 100;  // 单位：0.1秒
+    new_tio.c_cc[VMIN] = 0;               // 最小读取字节数
+
+    // 应用配置
+    if (tcsetattr(fd, TCSANOW, &new_tio) < 0) {
+        std::cerr << "[Serial] Failed to set serial config!" << std::endl;
+        close(fd);
+        fd = -1;
+        return false;
+    }
+
+    std::cout << "[Serial] Port " << port << " opened successfully (115200 8N1)" << std::endl;
+    return true;
 }
 
-// 4. 实现私有成员函数：帧同步（保留不变，解决宏未定义问题）
-bool SerialPort::syncFrameHeader() {
-    if (serial_fd_ < 0) return false;
+// 关闭串口（恢复旧配置）
+void SerialPort::close_port() {
+    if (fd >= 0) {
+        // 恢复旧配置
+        tcsetattr(fd, TCSANOW, &old_tio);
+        // 关闭文件描述符
+        close(fd);
+        fd = -1;
+        std::cout << "[Serial] Port " << port << " closed" << std::endl;
+    }
+}
 
-    uint8_t buf[128];
-    ssize_t read_len;
-    // 循环读取直到找到帧头 0xAA 0x55
+// 接收当前电机角度
+bool SerialPort::receive_motor_angles(std::vector<double>& angles) {
+    if (fd < 0) {
+        std::cerr << "[Serial] Port not opened!" << std::endl;
+        return false;
+    }
+
+    std::vector<uint8_t> buffer;
+    std::vector<uint8_t> frame;
+    bool frame_started = false;
+    struct timeval start, now;
+    gettimeofday(&start, NULL);
+
     while (true) {
-        // 读取1字节，超时则退出
-        read_len = read(serial_fd_, buf, 1);
-        if (read_len <= 0) return false;
+        gettimeofday(&now, NULL);
+        int elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_usec - start.tv_usec) / 1000;
+        if (elapsed > timeout) {
+            std::cerr << "[Serial] Receive timeout (" << timeout << "ms)!" << std::endl;
+            return false;
+        }
 
-        if (buf[0] == 0xAA) {  // 直接使用帧头值，避免数组访问问题
-            // 读下一字节验证是否是 0x55
-            read_len = read(serial_fd_, buf+1, 1);
-            if (read_len <= 0) return false;
-            if (buf[1] == 0x55) {
-                // 找到帧头，回退2字节（留给后续完整读取）
-                lseek(serial_fd_, -2, SEEK_CUR);
-                return true;
+        uint8_t byte;
+        ssize_t n = read(fd, &byte, 1);
+        if (n != 1) continue;
+
+        buffer.push_back(byte);
+        int buf_len = buffer.size();
+
+        // 检测帧头（0xAA 0x55）
+        if (buf_len >= 2 && !frame_started) {
+            if (buffer[buf_len-2] == FRAME_HEAD[0] && buffer[buf_len-1] == FRAME_HEAD[1]) {
+                frame_started = true;
+                frame.clear();
+                frame.push_back(buffer[buf_len-2]);
+                frame.push_back(buffer[buf_len-1]);
+                buffer.clear();
+                continue;
+            }
+        }
+
+        // 帧已开始，接收直到30字节
+        if (frame_started) {
+            frame.push_back(byte);
+            if (frame.size() == 30) {
+                // 解析帧
+                return unpack_frame(frame, angles);
             }
         }
     }
 }
 
-// 5. 实现私有成员函数：打包帧数据（保留不变）
-void SerialPort::packFrame(const GimbalData& data, uint8_t* frame, uint16_t& frame_len) {
-    frame_len = FRAME_TOTAL_LEN;
-    uint16_t crc = 0;
-
-    // 1. 帧头
-    frame[0] = 0xAA;
-    frame[1] = 0x55;
-    // 2. 数据长度
-    frame[2] = 0x08;
-    // 3. 有效数据（yaw + pitch，小端序）
-    memcpy(frame+3, &data.yaw, 4);
-    memcpy(frame+7, &data.pitch, 4);
-    // 4. CRC16校验（帧头+长度+有效数据，共11字节）
-    crc = calculateCRC16(frame, 11);  // 0-10字节（共11字节）
-    frame[11] = crc & 0xFF;          // 低字节
-    frame[12] = (crc >> 8) & 0xFF;   // 高字节
-    // 5. 帧尾
-    frame[13] = 0x55;
-    frame[14] = 0xAA;
-}
-
-// 6. 实现私有成员函数：解包帧数据（保留不变）
-bool SerialPort::unpackFrame(const uint8_t* frame, uint16_t frame_len, GimbalData& data) {
-    // 1. 校验总长度
-    if (frame_len != FRAME_TOTAL_LEN) return false;
-    // 2. 校验帧头/帧尾
-    if (frame[0] != 0xAA || frame[1] != 0x55 ||
-        frame[13] != 0x55 || frame[14] != 0xAA) {
+// 发送目标电机角度
+bool SerialPort::send_motor_angles(const std::vector<double>& angles) {
+    if (fd < 0) {
+        std::cerr << "[Serial] Port not opened!" << std::endl;
         return false;
     }
-    // 3. 校验数据长度
-    if (frame[2] != 0x08) return false;
-    // 4. CRC校验（开启时）
-    if (serial_config_.crc_check) {
-        uint16_t crc_calc = calculateCRC16(frame, 11);
-        uint16_t crc_recv = (frame[12] << 8) | frame[11];
-        if (crc_calc != crc_recv) return false;
+
+    // 封装为协议帧
+    std::vector<uint8_t> frame = pack_frame(angles);
+    // 发送帧
+    ssize_t n = write(fd, frame.data(), frame.size());
+    if (n != frame.size()) {
+        std::cerr << "[Serial] Send failed! Wrote " << n << " bytes (expected " << frame.size() << ")" << std::endl;
+        return false;
     }
-    // 5. 解析有效数据
-    memcpy(&data.yaw, frame+3, 4);
-    memcpy(&data.pitch, frame+7, 4);
+
+    std::cout << "[Serial] Sent angles: " 
+              << angles[0] << ", " 
+              << angles[1] << ", " 
+              << angles[2] << std::endl;
     return true;
 }
 
-// 7. 实现公有成员函数：简易版init（仅波特率，适配你的原始代码）
-bool SerialPort::init(const std::string& port_name, uint32_t baudrate) {
-    // 封装默认配置，调用完整版init
-    SerialConfig config;
-    config.baudrate = baudrate;
-    return this->init(port_name, config);
-}
-
-// 8. 实现公有成员函数：完整版init（带SerialConfig，保留不变）
-bool SerialPort::init(const std::string& port_name, const SerialConfig& config) {
-    serial_config_ = config;
-    serial_fd_ = open(port_name.c_str(), O_RDWR | O_NOCTTY | O_NDELAY);
-    if (serial_fd_ < 0) {
-        std::cerr << "Failed to open serial port: " << port_name << std::endl;
-        return false;
-    }
-
-    struct termios options;
-    tcgetattr(serial_fd_, &options);
-
-    // 设置波特率
-    speed_t baud = B115200;
-    switch (config.baudrate) {
-        case 9600: baud = B9600; break;
-        case 19200: baud = B19200; break;
-        case 38400: baud = B38400; break;
-        case 57600: baud = B57600; break;
-        case 115200: baud = B115200; break;
-        default: baud = B115200;
-    }
-    cfsetispeed(&options, baud);
-    cfsetospeed(&options, baud);
-
-    // 8N1模式：8位数据位，无校验，1位停止位
-    options.c_cflag &= ~PARENB;
-    options.c_cflag &= ~CSTOPB;
-    options.c_cflag &= ~CSIZE;
-    options.c_cflag |= CS8;
-
-    options.c_cflag |= CREAD | CLOCAL; // 启用接收，忽略调制解调器状态
-    options.c_iflag &= ~(IXON | IXOFF | IXANY); // 关闭软件流控
-    options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG); // 原始模式
-    options.c_oflag &= ~OPOST;
-
-    // 超时配置（毫秒转0.1秒单位，避免除以0）
-    options.c_cc[VTIME] = (config.timeout_ms / 100) > 0 ? (config.timeout_ms / 100) : 1;
-    options.c_cc[VMIN] = 0;  // 取消最小字节数限制（由帧同步处理）
-
-    tcsetattr(serial_fd_, TCSANOW, &options);
-    tcflush(serial_fd_, TCIFLUSH); // 清空接收缓冲区（帧同步前置）
-    return true;
-}
-
-// 9. 实现公有成员函数：close（仅保留1份，删除重复，注意::close()是系统函数）
-void SerialPort::close() {
-    if (serial_fd_ >= 0) {
-        ::close(serial_fd_);  // 加::表示调用全局系统函数，避免与类成员函数重名
-        serial_fd_ = -1;
-    }
-}
-
-// 10. 实现公有成员函数：简易版receiveGimbalData（无超时反馈，适配原始代码）
-bool SerialPort::receiveGimbalData(GimbalData& data) {
-    bool is_timeout = false;
-    return this->receiveGimbalData(data, is_timeout);
-}
-
-// 11. 实现公有成员函数：完整版receiveGimbalData（带超时反馈，保留不变）
-bool SerialPort::receiveGimbalData(GimbalData& data, bool& is_timeout) {
-    is_timeout = false;
-    uint8_t frame[FRAME_TOTAL_LEN];
-    ssize_t read_len = 0;
-
-    // 1. 帧同步：找到有效帧头（处理缓冲区残留）
-    if (!syncFrameHeader()) {
-        is_timeout = true;
-        return false;
-    }
-
-    // 2. 循环重传接收（配置的重试次数）
-    for (int retry = 0; retry < serial_config_.retry_times; retry++) {
-        // 读取完整帧
-        read_len = read(serial_fd_, frame, FRAME_TOTAL_LEN);
-        if (read_len != FRAME_TOTAL_LEN) {
-            tcflush(serial_fd_, TCIFLUSH); // 清空错误数据
-            continue;
-        }
-
-        // 解包+校验
-        if (unpackFrame(frame, FRAME_TOTAL_LEN, data)) {
-            return true;
-        } else {
-            std::cerr << "Receive frame error, retry: " << retry+1 << "/" << serial_config_.retry_times << std::endl;
-            tcflush(serial_fd_, TCIFLUSH);
-            continue;
-        }
-    }
-
-    is_timeout = true;
-    return false;
-}
-
-// 12. 实现公有成员函数：sendGimbalData
-bool SerialPort::sendGimbalData(const GimbalData& data) {
-    uint8_t frame[FRAME_TOTAL_LEN];
-    uint16_t frame_len = 0;
-    packFrame(data, frame, frame_len);
-
-    // 循环重传发送
-    for (int retry = 0; retry < serial_config_.retry_times; retry++) {
-        ssize_t write_len = write(serial_fd_, frame, frame_len);
-        if (write_len == frame_len) {
-            return true;
-        } else {
-            std::cerr << "Send frame error, retry: " << retry+1 << "/" << serial_config_.retry_times << std::endl;
-            tcflush(serial_fd_, TCOFLUSH); // 清空发送缓冲区
-            usleep(1000); // 短延时后重试
-            continue;
-        }
-    }
-
-    return false;
-}
+} // namespace serial
+} // namespace hitcrt

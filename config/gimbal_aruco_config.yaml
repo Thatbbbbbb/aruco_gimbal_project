@@ -1,24 +1,33 @@
-# 串口配置
-serial_config:
-  port_name: "/dev/ttyUSB0"  # Linux: /dev/ttyUSB0, Windows: COMx
-  baudrate: 115200           # 波特率
-  retry_times: 3             # 重传次数（容错）
-  timeout_ms: 1000           # 通信超时（ms）
-  crc_check: true            # 是否开启CRC校验
 
-# 其他配置不变...
-camera_config:
-  camera_index: 0            # 相机设备索引
-  width: 1280                # 图像宽度
-  height: 720                # 图像高度
-  fps: 30                    # 帧率
-camera_matrix: [2479.79773265868, 0, 624.843541232562, 0, 2478.98595904058, 516.678095396654, 0, 0, 1]
-dist_coeffs: [-0.0896322190932089, 0.486000473389527, 0, 0, 0]
+color: "red"  
 
-aruco_config:
-  dict_id: "DICT_6X6_250"
-  marker_size: 0.12           #单位m，同下
+# 相机内参和畸变矩阵（海康相机标定后的值）
+camera:
+  fx: 1200.0                 # 焦距x
+  fy: 1200.0                 # 焦距y
+  cx: 640.0                  # 光心x
+  cy: 480.0                  # 光心y
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]  # 畸变系数[k1,k2,p1,p2,k3]
+  camera_index: 0            # 海康相机索引（默认0）
+  capture_width: 1280       # 视频流宽度
+  capture_height: 960       # 视频流高度
+  capture_fps: 30           # 视频流帧率
+  
+# 相机与云台的转换关系（外参，需标定）
+transform:
+  camera_to_gimbal_rot: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]  # 旋转矩阵（3x3）
+  camera_to_gimbal_trans: [0.05, 0.0, 0.1]  # 平移向量（米）
 
-gimbal_config:
-  position_in_cam: [0.0, 0.0, 0.91]
-  loop_delay_ms: 30
+# 串口配置（波特率固定115200，仅需修改串口名）
+serial:
+  port: "/dev/ttyUSB0"       # 串口设备名
+  timeout: 1000              # 超时时间（ms）
+
+# 运动学参数
+kinematics:
+  delta: 1.5708              # M_PI_2
+  yita1: -1.5708             # -M_PI_2
+  yita2: 0.5236              # 30°转弧度
+  yita3: 2.6180              # 150°转弧度
+  arfa1: 0.9425              # 54°转弧度
+  arfa2: 1.5708              # M_PI_2

@@ -22,4 +22,4 @@ install_manifest.txt
 Thumbs.db
 
 # 可执行文件
-aruco_gimbal_control
+gimbal_node

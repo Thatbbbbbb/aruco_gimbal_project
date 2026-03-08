@@ -1,59 +1,60 @@
 #include "config_parser.h"
-#include <yaml-cpp/yaml.h>
-#include <opencv2/aruco.hpp>
+#include <stdexcept>
 #include <iostream>
 
-bool ConfigParser::loadConfig(const std::string& yaml_path, ProjectConfig& config) {
+namespace Parser {
+bool parse_config(const std::string& config_path, Parser::parser::ConfigData& config) {
     try {
-        // 加载YAML文件
-        YAML::Node root = YAML::LoadFile(yaml_path);
+        YAML::Node yaml_config = YAML::LoadFile(config_path);
 
-        // 解析串口配置
-        YAML::Node serial_node = root["serial_config"];
-        config.serial_port = serial_node["port_name"].as<std::string>();
-        config.serial_baudrate = serial_node["baudrate"].as<uint32_t>();
 
-        // 解析相机配置
-        YAML::Node camera_node = root["camera_config"];
-        config.camera_index = camera_node["camera_index"].as<int>();
-        config.camera_width = camera_node["width"].as<int>();
-        config.camera_height = camera_node["height"].as<int>();
-        config.camera_fps = camera_node["fps"].as<int>();
+        // 解析相机内参
+        config.fx = yaml_config["camera"]["fx"].as<double>();
+        config.fy = yaml_config["camera"]["fy"].as<double>();
+        config.cx = yaml_config["camera"]["cx"].as<double>();
+        config.cy = yaml_config["camera"]["cy"].as<double>();
+        config.distortion_coeffs = yaml_config["camera"]["distortion_coeffs"].as<std::vector<double>>();
+        config.camera_index = yaml_config["camera"]["index"].as<int>();
+        config.camera_width = yaml_config["camera"]["capture_width"].as<int>();
+        config.camera_height = yaml_config["camera"]["capture_height"].as<int>();
+        config.camera_fps = yaml_config["camera"]["capture_fps"].as<int>();
+        config.threshold_ = yaml_config["threshold"].as<double>();
+        config.max_angle_error_ = yaml_config["max_angle_error"].as<double>() / 57.3;
+        config.min_lightbar_ratio_ = yaml_config["min_lightbar_ratio"].as<double>();
+        config.max_lightbar_ratio_ = yaml_config["max_lightbar_ratio"].as<double>();
+        config.min_lightbar_length_ = yaml_config["min_lightbar_length"].as<double>();
 
-        // 解析相机内参（3x3）
-        std::vector<double> cam_mat_vec = camera_node["camera_matrix"].as<std::vector<double>>();
-        config.camera_matrix = cv::Mat(3, 3, CV_64F, cam_mat_vec.data()).clone();
+        // 加载相机参数（从配置文件读取，需提前标定）
+       
+        config.camera_matrix_ = (cv::Mat_<double>(3,3) << 
+            config.fx, 0, config.cx,
+            0, config.fy, config.cy,
+            0, 0, 1);
+        // 解析相机→云台转换
+        config.cam_to_gimbal_rot = yaml_config["transform"]["camera_to_gimbal_rot"].as<std::vector<double>>();
+        config.cam_to_gimbal_trans = yaml_config["transform"]["camera_to_gimbal_trans"].as<std::vector<double>>();
 
-        // 解析畸变参数（1x5）
-        std::vector<double> dist_vec = camera_node["dist_coeffs"].as<std::vector<double>>();
-        config.dist_coeffs = cv::Mat(1, 5, CV_64F, dist_vec.data()).clone();
+        config.serial_port = yaml_config["serial"]["port"].as<std::string>();
+        config.serial_timeout = yaml_config["serial"]["timeout"].as<int>();
 
-        // 解析ArUco配置
-        YAML::Node aruco_node = root["aruco_config"];
-        std::string dict_name = aruco_node["dict_id"].as<std::string>();
-        config.aruco_dict_id = arucoDictNameToId(dict_name);
-        config.marker_size = aruco_node["marker_size"].as<float>();
+        config.kinematics_params.delta = yaml_config["kinematics"]["delta"].as<double>();
+        config.kinematics_params.yita1 = yaml_config["kinematics"]["yita1"].as<double>();
+        config.kinematics_params.yita2 = yaml_config["kinematics"]["yita2"].as<double>();
+        config.kinematics_params.yita3 = yaml_config["kinematics"]["yita3"].as<double>();
+        config.kinematics_params.arfa1 = yaml_config["kinematics"]["arfa1"].as<double>();
+        config.kinematics_params.arfa2 = yaml_config["kinematics"]["arfa2"].as<double>();
 
-        // 解析云台配置
-        YAML::Node gimbal_node = root["gimbal_config"];
-        std::vector<double> gimbal_pos_vec = gimbal_node["position_in_cam"].as<std::vector<double>>();
-        config.gimbal_pos_in_cam = cv::Vec3d(gimbal_pos_vec[0], gimbal_pos_vec[1], gimbal_pos_vec[2]);
-        config.loop_delay_ms = gimbal_node["loop_delay_ms"].as<int>();
-
+        std::cout << "配置文件解析成功！" << std::endl;
         return true;
+    } catch (const YAML::BadFile& e) {
+        std::cerr << "配置文件不存在: " << config_path << " 错误: " << e.what() << std::endl;
+        return false;
     } catch (const YAML::Exception& e) {
-        std::cerr << "YAML parse error: " << e.what() << std::endl;
+        std::cerr << "配置文件解析错误: " << e.what() << std::endl;
         return false;
     } catch (const std::exception& e) {
-        std::cerr << "Config load error: " << e.what() << std::endl;
+        std::cerr << "解析配置时出错: " << e.what() << std::endl;
         return false;
     }
 }
-
-int ConfigParser::arucoDictNameToId(const std::string& dict_name) {
-    if (dict_name == "DICT_6X6_250") return cv::aruco::DICT_6X6_250;
-    if (dict_name == "DICT_4X4_100") return cv::aruco::DICT_4X4_100;
-    if (dict_name == "DICT_5X5_250") return cv::aruco::DICT_5X5_250;
-    // 默认返回6X6_250
-    return cv::aruco::DICT_6X6_250;
 }

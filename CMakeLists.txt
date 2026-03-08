@@ -1,42 +1,36 @@
 cmake_minimum_required(VERSION 3.10)
-project(aruco_gimbal_control)
+project(GimbalControl)
 
-# 设置C++标准
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 14)
 
-# 查找依赖库
+# 查找依赖
 find_package(OpenCV REQUIRED)
-find_package(yaml-cpp REQUIRED) # 新增：查找yaml-cpp库
-find_package(Threads REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
-# 包含头文件目录
-include_directories(
-    ${CMAKE_SOURCE_DIR}/include
-    ${OpenCV_INCLUDE_DIRS}
-    ${YAML_CPP_INCLUDE_DIRS} # 新增：添加yaml-cpp头文件目录
-)
-
-# 源文件列表（新增config_parser.cpp）
+# 收集源文件
 set(SOURCES
-    src/aruco_detection.cpp
-    src/serial_port.cpp
-    src/gimbal_transform.cpp
-    src/config_parser.cpp
     src/main.cpp
+    src/config_parser.cpp
+    src/detector.cpp
+    src/serial_port.cpp
 )
 
-# 生成可执行文件
-add_executable(${PROJECT_NAME} ${SOURCES})
+add_executable(gimbal_node ${SOURCES})
 
-# 链接依赖库（新增yaml-cpp库）
-target_link_libraries(${PROJECT_NAME}
+target_include_directories(gimbal_node PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OpenCV_INCLUDE_DIRS}
+    ${EIGEN3_INCLUDE_DIR}
+    ${YAML_CPP_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR} 
+    
+)
+
+target_link_libraries(gimbal_node
     ${OpenCV_LIBS}
-    ${YAML_CPP_LIBRARIES}
-    ${CMAKE_THREAD_LIBS_INIT}
+    Eigen3::Eigen
+    yaml-cpp
+    pthread
 )
-
-# 安装配置（可选）
-install(TARGETS ${PROJECT_NAME} DESTINATION bin)
-install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
-install(DIRECTORY config/ DESTINATION config/${PROJECT_NAME})

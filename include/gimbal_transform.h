@@ -1,13 +1,16 @@
 #pragma once
-#ifndef GIMBAL_TRANSFORM_H
-#define GIMBAL_TRANSFORM_H
 
-#include <opencv2/core.hpp>
+#include <Eigen/Dense>
+#include "config_parser.h"
 
-// 相机坐标系下云台的位置，可在此修改
-const extern cv::Vec3d GIMBAL_POS_IN_CAM; // (x,y,z) 单位m
 
-// 将aruco的相机坐标转换为云台坐标，并计算所需的瞄准角度
-void camToGimbalTransform(const cv::Vec3d& marker_cam, const cv::Vec3d& gimbal_pos, float& target_yaw, float& target_pitch);
+class GimbalTransformer {
+private:
+    Eigen::Matrix3d cam_to_gimbal_rot;  
+    Eigen::Vector3d cam_to_gimbal_trans;
+public:
 
-#endif
+    GimbalTransformer(const Parser::parser::ConfigData& config);
+
+    Eigen::Isometry3d cam_to_gimbal_pose(const Eigen::Isometry3d& cam_pose);
+};

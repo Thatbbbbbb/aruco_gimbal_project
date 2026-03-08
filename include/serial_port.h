@@ -1,54 +1,40 @@
-// serial_port.h
 #pragma once
 #include <string>
-#include <cstdint>
-#include <iostream>
+#include <vector>
+#include <termios.h>
 
-// 1. 定义协议宏（解决 FRAME_HEAD 未定义问题）
-#define FRAME_HEAD {0xAA, 0x55}
-#define FRAME_TAIL {0x55, 0xAA}
-#define FRAME_TOTAL_LEN 15  // 对应你代码中的帧长度（15字节）
+namespace hitcrt {
+namespace serial {
 
-// 2. 定义串口配置结构体（SerialConfig）
-struct SerialConfig {
-    uint32_t baudrate = 115200;    // 默认波特率
-    uint32_t timeout_ms = 1000;    // 默认超时1秒
-    int retry_times = 3;           // 默认重试3次
-    bool crc_check = true;         // 默认开启CRC校验
-};
-
-// 3. 定义云台数据结构体（GimbalData）
-struct GimbalData {
-    float yaw = 0.0f;
-    float pitch = 0.0f;
-};
-
-// 4. 声明全局CRC8函数（你的代码中用到了，需提前声明）
-uint8_t crc8(const uint8_t* data, uint32_t len);
-
-// 5. 声明SerialPort类（所有成员函数仅声明，无实现）
+// 电机角度结构体
+std::vector<double> target_angles_vec={0.0, 0.0, 0.0};
+// 串口通信类（波特率固化115200）
 class SerialPort {
 private:
-    int serial_fd_ = -1;           // 串口文件描述符
-    SerialConfig serial_config_;   // 串口配置
-
-    // 私有成员函数声明（仅内部使用）
-    uint16_t calculateCRC16(const uint8_t* data, uint16_t len);
-    bool syncFrameHeader();
-    void packFrame(const GimbalData& data, uint8_t* frame, uint16_t& frame_len);
-    bool unpackFrame(const uint8_t* frame, uint16_t frame_len, GimbalData& data);
+    int fd;                 // 串口文件描述符
+    std::string port;       // 串口名
+    int timeout;            // 超时时间（ms）
+    struct termios old_tio; // 保存旧的串口配置
 
 public:
-    // 构造/析构声明
+    // 构造函数（移除波特率参数）
+    SerialPort(const std::string& port, int timeout);
+    
+    // 析构函数（恢复串口配置）
     ~SerialPort();
 
-    // 公有成员函数声明（两个重载的init，对应你的两种实现）
-    bool init(const std::string& port_name, uint32_t baudrate);
-    bool init(const std::string& port_name, const SerialConfig& config);
+    // 打开串口
+    bool open_port();
 
-    // 公有成员函数声明
-    void close();
-    bool receiveGimbalData(GimbalData& data);  // 简易版（无超时反馈）
-    bool receiveGimbalData(GimbalData& data, bool& is_timeout);  // 完整版（带超时反馈）
-    bool sendGimbalData(const GimbalData& data);
+    // 关闭串口
+    void close_port();
+
+    // 接收当前电机角度
+    bool receive_motor_angles(std::vector<double>& angles);
+
+    // 发送目标电机角度
+    bool send_motor_angles(const std::vector<double>& angles);
 };
+
+} // namespace serial
+} // namespace hitcrt
