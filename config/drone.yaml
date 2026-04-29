@@ -14,9 +14,3 @@ roi:
   y: 0
   width: -1   # -1表示全宽
   height: -1  # -1表示全高
-
-# 类别映射（可选）
-class_names:
-  0: "drone"
-  1: "small_drone"
-  2: "large_drone"

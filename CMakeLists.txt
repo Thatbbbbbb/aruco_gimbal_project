@@ -55,13 +55,14 @@ set(MAIN_SOURCES src/main.cpp src/serial_port.cpp)
 file(GLOB TASK_SOURCES tasks/yolos/*.cpp)
 file(GLOB_RECURSE DEPLOY_SOURCES deploy/*.cpp deploy/*.cu)
 file(GLOB IO_SOURCES io/*.cpp io/gimbal/*.cpp)
+file(GLOB TOOL_SOURCES tools/*.cpp)
 
 if(EXISTS ${PROJECT_SOURCE_DIR}/io/hikrobot/hikrobot.cpp)
     list(APPEND IO_SOURCES ${PROJECT_SOURCE_DIR}/io/hikrobot/hikrobot.cpp)
     link_directories(${PROJECT_SOURCE_DIR}/io/hikrobot/lib/amd64)
 endif()
 
-set(ALL_SOURCES ${MAIN_SOURCES} ${TASK_SOURCES} ${IO_SOURCES})
+set(ALL_SOURCES ${MAIN_SOURCES} ${TASK_SOURCES} ${IO_SOURCES} ${TOOL_SOURCES}) 
 list(FILTER ALL_SOURCES EXCLUDE REGEX "\\.hpp$|\\.h$")
 add_executable(gimbal_node ${ALL_SOURCES})
 
@@ -74,6 +75,8 @@ target_link_libraries(gimbal_node
     ${yaml-cpp_LIBRARIES}
     spdlog::spdlog
     fmt::fmt
+    yaml-cpp
+    spdlog
     Threads::Threads
     pthread
     dl

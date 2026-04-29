@@ -29,7 +29,11 @@ function(configure_cuda_trt target)
     target_include_directories(${target} PUBLIC /usr/local/cuda-11.8/include)
     target_link_directories(${target} PRIVATE ${TENSORRT_PATH}/lib)
     
-    target_link_libraries(${target} PRIVATE nvinfer nvinfer_plugin nvonnxparser)
+    target_link_libraries(${target} PRIVATE 
+    /usr/local/tensorrt/lib/libnvinfer.so
+    /usr/local/tensorrt/lib/libnvinfer_plugin.so
+    /usr/local/tensorrt/lib/libnvonnxparser.so
+)
 endfunction()
 
 # 添加源文件的函数
