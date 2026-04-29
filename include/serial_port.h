@@ -6,9 +6,7 @@
 namespace hitcrt {
 namespace serial {
 
-// 电机角度结构体
-std::vector<double> target_angles_vec={0.0, 0.0, 0.0};
-// 串口通信类（波特率固化115200）
+// 串口通信类（波特率固化1  15200）
 class SerialPort {
 private:
     int fd;                 // 串口文件描述符
@@ -30,10 +28,10 @@ public:
     void close_port();
 
     // 接收当前电机角度
-    bool receive_motor_angles(std::vector<double>& angles);
+    bool receive_motor_angles(std::vector<float>& angles);
 
     // 发送目标电机角度
-    bool send_motor_angles(const std::vector<double>& angles);
+    bool send_motor_angles(const std::vector<float>& angles);
 };
 
 } // namespace serial

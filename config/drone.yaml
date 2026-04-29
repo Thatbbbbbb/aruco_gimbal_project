@@ -1,0 +1,22 @@
+# 模型配置
+drone_model_path: "drone_detection.engine"  # TensorRT引擎文件
+device: "cuda"
+
+# 检测阈值
+confidence_threshold: 0.5   # 检测置信度阈值
+nms_threshold: 0.45         # NMS IoU阈值
+min_confidence: 0.3         # 最小置信度
+
+# ROI配置（可选，只检测指定区域）
+use_roi: false
+roi:
+  x: 0
+  y: 0
+  width: -1   # -1表示全宽
+  height: -1  # -1表示全高
+
+# 类别映射（可选）
+class_names:
+  0: "drone"
+  1: "small_drone"
+  2: "large_drone"

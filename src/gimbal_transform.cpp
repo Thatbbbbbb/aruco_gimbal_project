@@ -1,3 +1,5 @@
+/*
+#pragma once
 #include "gimbal_transform.h"
 #include <iostream>
 #include <stdexcept>
@@ -33,3 +35,4 @@ Eigen::Isometry3d GimbalTransformer::cam_to_gimbal_pose(const Eigen::Isometry3d&
     std::cout << "相机位姿转换为云台位姿完成" << std::endl;
     return gimbal_pose;
 }
+    */

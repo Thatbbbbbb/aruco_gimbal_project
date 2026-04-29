@@ -1,137 +1,128 @@
-#include "detector.h"
 #include "serial_port.h"
-#include "gimbal_transform.h"
-#include "config_parser.h"
+#include "engineer_kinematics.hpp"
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/core/types.hpp>
+#include <opencv2/core/mat.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 #include <iostream>
 #include <unistd.h>
+#include <chrono>  // 用于计时
 
-// 海康相机初始化（不变）
-cv::VideoCapture initHikCamera(const Parser::parser::ConfigData& config) {
-    cv::VideoCapture cap(config.camera_index);
-    if (!cap.isOpened()) {
-        std::cerr << "Failed to open Hik camera! Index: " << config.camera_index << std::endl;
-        exit(EXIT_FAILURE);
+// 计时工具：获取当前时间（秒）
+double getTimeSeconds() {
+    auto now = std::chrono::steady_clock::now();
+    auto duration = now.time_since_epoch();
+    return std::chrono::duration<double>(duration).count();
+}
+
+std::vector<float> convertEulerListToVector(const std::vector<std::array<float, 3>>& euler_list)
+{
+    std::vector<float> result;
+    result.reserve(euler_list.size() * 3);
+
+    for (const auto& arr : euler_list) {
+        result.push_back(arr[0] * 180.0 / M_PI);
+        result.push_back(arr[1] * 180.0 / M_PI);
+        result.push_back(arr[2] * 180.0 / M_PI);
     }
+    return result;
+}
 
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, config.camera_width);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, config.camera_height);
-    cap.set(cv::CAP_PROP_FPS, config.camera_fps);
+Eigen::Isometry3d eulerToIsometry(float roll, float pitch, float yaw)
+{
+    Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
 
-    return cap;
+    Eigen::AngleAxisd yawAngle(yaw, Eigen::Vector3d::UnitZ());
+    Eigen::AngleAxisd pitchAngle(pitch, Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd rollAngle(roll, Eigen::Vector3d::UnitX());
+
+    Eigen::Quaterniond q = yawAngle * pitchAngle * rollAngle;
+    T.rotate(q);
+    return T;
+}
+
+std::vector<float> rad_to_deg(const std::vector<float>& rad_vec) {
+    std::vector<float> deg_vec;
+    deg_vec.reserve(rad_vec.size());
+    for (float rad : rad_vec) {
+        deg_vec.push_back(rad * 180.0f / M_PI);
+    }
+    return deg_vec;
 }
 
 int main(int argc, char** argv) {
-
-    Parser::parser::ConfigData config;
-    std::string yaml_path = "../config/gimbal_aruco_config.yaml";
-    if (!Parser::parser::loadConfig(yaml_path, config)) {
-        std::cerr << "Failed to load config file!" << std::endl;
-        return -1;
-    }
-    hitcrt::kinematics::EngineerKinematics kinematics(config.kinematics_params);
-    GimbalTransformer gimbal_transformer(config);
-    auto_aim::Detector detector(yaml_path);
-    cv::VideoCapture cap(0);
-    
-    if (!cap.isOpened()) return -1;
-
-    cv::Mat frame;
-    int count = 0;
-
-
-    // 初始化串口（传入新配置）
-    hitcrt::serial::SerialPort serial(config.serial_port, config.serial_timeout);
+    hitcrt::serial::SerialPort serial("/dev/ttyUSB0", 100);
     if (!serial.open_port()) {
         std::cerr << "Failed to init serial port!" << std::endl;
         return -1;
     }
 
-    // 初始化海康相机
-    cv::VideoCapture cap = initHikCamera(config);
+    hitcrt::kinematics::params my_params;
+    hitcrt::kinematics::engineer_kinematics kin(my_params);
 
-    cv::Mat frame;
-    int frame_count = 0; // 帧计数（传给detect函数）
-    std::vector<double> current_angles(3), target_angles(3);
-    cv::Vec3d marker_cam_coord;
-    bool is_timeout;
+    int frame_count = 0;
+    std::vector<float> current_joint_angles(3);
+    bool is_timeout = false;
+
+
+    // ======================
+    // 自动 pitch 递增变量
+    // ======================
+    float pitch_deg = 0.0f;        // 从 0 度开始
+    double last_time = getTimeSeconds();
+    const double increment_interval = 0.1;  // 每 1 秒加 1 度
+    const float max_pitch = 30.0f;   // 最大角度（防止云台撞墙）
+
+    float roll_deg = 0.0f;
+    float yaw_deg = 0.0f;
+
+    Eigen::Isometry3d T_desired;
 
     while (true) {
-        cap >> frame;
-        if (frame.empty()) {
-            std::cerr << "Failed to read frame!" << std::endl;
-            break;
-        }
-        
+        double current_time = getTimeSeconds();
 
-        // 
-        std::list<auto_aim::Lightbar> lightbars = detector.detect(frame, frame_count);
-        if (lightbars.empty()) {
-            std::cout << "No aruco marker detected!" << std::endl;
-            cv::imshow("Frame", frame);
-            if (cv::waitKey(1) == 27) break;
-            continue;
-        }
-
-        //  接收云台当前角度（带超时+重传）
-      if (!serial.receive_motor_angles(current_angles) {
-            if (is_timeout) {
-                std::cerr << "Receive gimbal data timeout!" << std::endl;
-            } else {
-                std::cerr << "Receive gimbal data error (check frame/crc)!" << std::endl;
+        // ======================
+        // 核心：每秒 +1° pitch
+        // ======================
+        if (current_time - last_time >= increment_interval) {
+            pitch_deg += 1.0f;
+            if (pitch_deg > max_pitch) {  // 超过最大值就归零（循环）
+                pitch_deg = 0.0f;
             }
-            continue; 
+            last_time = current_time;
+
+            std::cout << "✅ 当前 pitch: " << pitch_deg << " °" << std::endl;
         }
 
- 
-        Eigen::Isometry3d forward_pose = kinematics.forward_kinematics( current_angles);
-   
-        // 输出正解结果,此时云台角度
-        Eigen::Vector3d translation = forward_pose.translation();
-        std::cout << "X轴平移：" << translation.x() << std::endl;
-        std::cout << "Y轴平移：" << translation.y() << std::endl;
-        std::cout << "Z轴平移：" << translation.z() << std::endl;
-        
-        
-        //这里传入一个假设的位姿target_pose
-        hitcrt::kinematics::Params params; 
-        hitcrt::kinematics::EngineerKinematics kinematics(params);
-        Eigen::Isometry3d target_pose = Eigen::Isometry3d::Identity();  // 初始位姿（单位矩阵）
-        target_pose.pretranslate(Eigen::Vector3d(0.1, 0.2, 0.3)); 
-        Eigen::Vector3d gimbal_coords = gimbal_transformer.cam_to_gimbal_pose(target_pose).translation();     // 设置平移：x=0.1, y=0.2, z=0.3
-        bool inv_success = kinematics.inverse_kinematics(target_pose, target_angles);
-    
-        // 输出逆解结果
-        if (inv_success) {
-            std::cout << "=== 逆运动学求解结果（电机角度，单位：弧度）===" << std::endl;
-            std::cout << "电机1角度：" << target_angles[0] << " (约" << target_angles[0]*180/M_PI << "度)" << std::endl;
-            std::cout << "电机2角度：" << target_angles[1] << " (约" << target_angles[1]*180/M_PI << "度)" << std::endl;
-            std::cout << "电机3角度：" << target_angles[2] << " (约" << target_angles[2]*180/M_PI << "度)" << std::endl;
-        } else {
-            std::cerr << "逆运动学求解失败！" << std::endl;
-        }
+        // 重新计算目标位姿
+        T_desired = eulerToIsometry(
+            roll_deg * M_PI / 180.0f,
+            pitch_deg * M_PI / 180.0f,
+            yaw_deg * M_PI / 180.0f
+        );
 
-        // 发送目标角度给云台（带重传）
-        if (!serial.send_motor_angles(target_angles)) {
-            std::cerr << "Send gimbal data failed after retry!" << std::endl;
+        // 接收云台角度
+        if (!serial.receive_motor_angles(current_joint_angles)) {
+            std::cerr << "Receive gimbal data failed!" << std::endl;
             continue;
         }
 
-        std::cout << "=====================================" << std::endl;
-        std::cout << "Marker Cam Coord: " << marker_cam_coord << std::endl;
-        std::cout << "Current Gimbal Angles: " << current_angles[0]<< ", " << current_angles[1] << ", " << current_angles[2]<< std::endl;
-        std::cout << "Target Gimbal Angles: " << target_angles[0] <<    ", " << target_angles[2] << ", " << target_angles[3]<< std::endl;
+        // 逆解
+        std::vector<std::array<float, 3>> euler_list;
+        bool success = kin.inverse_kinematics(T_desired, euler_list);
 
+        if (success && !euler_list.empty()) {
+            std::vector<float> euler_vector = convertEulerListToVector(euler_list);
+            std::vector<float> target_angles(euler_vector.begin(), euler_vector.begin() + 3);
 
-        cv::imshow("Frame", frame);
-        if (cv::waitKey(1) == 27) break;
+            if (!serial.send_motor_angles(target_angles)) {
+                std::cerr << "Send gimbal data failed!" << std::endl;
+            }
+        }
 
-        usleep(1000);
+        usleep(10000); // 10ms loop
     }
-
-    cap.release();
-    cv::destroyAllWindows();
-    serial.close_port();
 
     return 0;
 }
