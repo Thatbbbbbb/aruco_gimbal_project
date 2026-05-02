@@ -1,16 +1,17 @@
-# 模型配置
-drone_model_path: "drone_detection.engine"  # TensorRT引擎文件
+# 模型路径（使用 .engine 文件）
+drone_model_path: "/home/thatbbbbbb/projects/aruco_gimbal_project/detect/train/weights/best.engine"
+
+# 输入尺寸（根据上面确认的）
+input_width: 640
+input_height: 640
+
+# 设备
 device: "cuda"
 
-# 检测阈值
-confidence_threshold: 0.5   # 检测置信度阈值
-nms_threshold: 0.45         # NMS IoU阈值
-min_confidence: 0.3         # 最小置信度
+# 检测参数
+confidence_threshold: 0.5
+nms_threshold: 0.45
+min_confidence: 0.3
 
-# ROI配置（可选，只检测指定区域）
+# ROI 配置（可选）
 use_roi: false
-roi:
-  x: 0
-  y: 0
-  width: -1   # -1表示全宽
-  height: -1  # -1表示全高
