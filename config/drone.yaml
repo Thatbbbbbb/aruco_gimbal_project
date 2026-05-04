@@ -1,5 +1,5 @@
 # 模型路径（使用 .engine 文件）
-drone_model_path: "/home/thatbbbbbb/projects/aruco_gimbal_project/detect/train/weights/best.engine"
+drone_model_path: "/home/thatbbbbbb/projects/aruco_gimbal_project/detect/train/best.engine"
 
 # 输入尺寸（根据上面确认的）
 input_width: 640

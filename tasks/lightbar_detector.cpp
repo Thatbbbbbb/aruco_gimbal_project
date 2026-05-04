@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <fstream>
+#include "tools/yaml.hpp"
 
 namespace drone_detection {
 
@@ -35,50 +37,103 @@ SingleLightbar::SingleLightbar(const cv::RotatedRect& rect, const cv::Point2f& o
 LightbarDetector::LightbarDetector() {
 }
 
+bool LightbarDetector::loadConfig(const std::string& path) {
+    try {
+        YAML::Node config = YAML::LoadFile(path);
+        
+        if (config["lightbar"]) {
+            lightbar_color_ = config["lightbar"]["color"].as<std::string>();
+            
+            // 读取颜色阈值
+            if (config["lightbar"]["h_min"]) h_min_ = config["lightbar"]["h_min"].as<int>();
+            if (config["lightbar"]["h_max"]) h_max_ = config["lightbar"]["h_max"].as<int>();
+            if (config["lightbar"]["s_min"]) s_min_ = config["lightbar"]["s_min"].as<int>();
+            if (config["lightbar"]["s_max"]) s_max_ = config["lightbar"]["s_max"].as<int>();
+            if (config["lightbar"]["v_min"]) v_min_ = config["lightbar"]["v_min"].as<int>();
+            if (config["lightbar"]["v_max"]) v_max_ = config["lightbar"]["v_max"].as<int>();
+        }
+        
+        if (config["detect"]) {
+            if (config["detect"]["min_area"]) min_lightbar_area_ = config["detect"]["min_area"].as<double>();
+            if (config["detect"]["max_area"]) max_lightbar_area_ = config["detect"]["max_area"].as<double>();
+            if (config["detect"]["min_ratio"]) min_lightbar_ratio_ = config["detect"]["min_ratio"].as<double>();
+            if (config["detect"]["max_ratio"]) max_lightbar_ratio_ = config["detect"]["max_ratio"].as<double>();
+            if (config["detect"]["max_angle_error"]) max_angle_error_ = config["detect"]["max_angle_error"].as<double>();
+            if (config["detect"]["max_group_distance"]) max_group_distance_ = config["detect"]["max_group_distance"].as<double>();
+            if (config["detect"]["min_row_lightbars"]) min_lightbars_per_row_ = config["detect"]["min_row_lightbars"].as<int>();
+            if (config["detect"]["max_row_lightbars"]) max_lightbars_per_row_ = config["detect"]["max_row_lightbars"].as<int>();
+            if (config["detect"]["min_top_bottom_distance"]) min_top_bottom_distance_ = config["detect"]["min_top_bottom_distance"].as<double>();
+            if (config["detect"]["max_top_bottom_distance"]) max_top_bottom_distance_ = config["detect"]["max_top_bottom_distance"].as<double>();
+        }
+        
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+cv::Mat LightbarDetector::extractColor(const cv::Mat& img) {
+    cv::Mat hsv, mask;
+    cv::cvtColor(img, hsv, cv::COLOR_BGR2HSV);
+
+    // 使用配置文件读取的阈值，不再写死！
+    cv::inRange(hsv, cv::Scalar(h_min_, s_min_, v_min_),
+                     cv::Scalar(h_max_, s_max_, v_max_), mask);
+
+    // 红色特殊处理
+    if (lightbar_color_ == "red") {
+        cv::Mat mask2;
+        cv::inRange(hsv, cv::Scalar(160, s_min_, v_min_),
+                         cv::Scalar(180, s_max_, v_max_), mask2);
+        mask |= mask2;
+    }
+
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+    cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
+    cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
+
+    return mask;
+}
+
 std::vector<SingleLightbar> LightbarDetector::detectLightbars(const cv::Mat& img, const cv::Rect& roi) {
     std::vector<SingleLightbar> lightbars;
     
-    // 检查 ROI 有效性
     if (roi.x < 0 || roi.y < 0 || roi.x + roi.width > img.cols || roi.y + roi.height > img.rows) {
         return lightbars;
     }
     
-    // 提取 ROI 区域
     cv::Mat roi_img = img(roi);
     if (roi_img.empty() || roi_img.rows < 10 || roi_img.cols < 10) return lightbars;
     
-    // 转换为灰度图
-    cv::Mat gray;
-    cv::cvtColor(roi_img, gray, cv::COLOR_BGR2GRAY);
+    cv::Mat binary = extractColor(roi_img);
     
-    // 二值化（提取高亮区域）
-    cv::Mat binary;
-    cv::threshold(gray, binary, brightness_threshold_, 255, cv::THRESH_BINARY);
-    
-    // 形态学操作去除噪点
-    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
-    cv::morphologyEx(binary, binary, cv::MORPH_OPEN, kernel);
-    cv::morphologyEx(binary, binary, cv::MORPH_CLOSE, kernel);
-    
-    // 查找轮廓
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     
     for (const auto& contour : contours) {
         double area = cv::contourArea(contour);
         if (area < min_lightbar_area_) continue;
+        if (area > max_lightbar_area_) continue;  // 最大面积过滤
         
-        // 拟合旋转矩形
         cv::RotatedRect rect = cv::minAreaRect(contour);
         
-        // 检查长宽比（灯条应该是细长的）
-        float width = std::min(rect.size.width, rect.size.height);
-        float height = std::max(rect.size.width, rect.size.height);
-        float ratio = height / width;
+        float w = rect.size.width;
+        float h = rect.size.height;
+        float len = std::max(w, h);
+        float wid = std::min(w, h);
+        float ratio = len / wid;
         
-        if (ratio > max_lightbar_ratio_) continue;
+        if (ratio < min_lightbar_ratio_) continue;   // 最小长宽比
+        if (ratio > max_lightbar_ratio_) continue;   // 最大长宽比
+
+        // 角度过滤
+        float angle = 0;
+        if (w < h) angle = rect.angle;
+        else angle = rect.angle + 90;
+        float angle_deg = std::abs(angle);
+        float angle_error = std::min(angle_deg, 180.0f - angle_deg);
+        if (angle_error > max_angle_error_) continue;
         
-        // 创建灯条并调整坐标到原图
         lightbars.emplace_back(rect, cv::Point2f(roi.x, roi.y));
     }
     
@@ -88,18 +143,18 @@ std::vector<SingleLightbar> LightbarDetector::detectLightbars(const cv::Mat& img
 std::vector<HorizontalLightbarGroup> LightbarDetector::groupByRow(
     const std::vector<SingleLightbar>& lightbars) {
     
-    if (lightbars.empty()) return {};
+    std::vector<HorizontalLightbarGroup> rows;
     
-    // 按 Y 坐标排序
+    if (lightbars.empty()) return rows;
+    
     std::vector<SingleLightbar> sorted = lightbars;
     std::sort(sorted.begin(), sorted.end(),
         [](const SingleLightbar& a, const SingleLightbar& b) {
             return a.center.y < b.center.y;
         });
     
-    // 聚类分组（Y 坐标相近的为同一行）
     std::vector<std::vector<SingleLightbar>> row_clusters;
-    float y_threshold = 15.0f;  // Y 坐标差异阈值
+    float y_threshold = 15.0f;
     
     for (const auto& lb : sorted) {
         bool added = false;
@@ -123,8 +178,6 @@ std::vector<HorizontalLightbarGroup> LightbarDetector::groupByRow(
         }
     }
     
-    // 过滤掉灯条数量不足的行
-    std::vector<HorizontalLightbarGroup> rows;
     for (const auto& cluster : row_clusters) {
         if (cluster.size() >= min_lightbars_per_row_ && 
             cluster.size() <= max_lightbars_per_row_) {
@@ -142,14 +195,12 @@ HorizontalLightbarGroup LightbarDetector::filterRowGroup(
     
     if (row_candidates.empty()) return group;
     
-    // 按 X 坐标排序
     std::vector<SingleLightbar> sorted = row_candidates;
     std::sort(sorted.begin(), sorted.end(),
         [](const SingleLightbar& a, const SingleLightbar& b) {
-            return a.center.x < b.center.x;
+            return a.center.x < a.center.x;
         });
     
-    // 检查灯条之间的间距
     std::vector<SingleLightbar> filtered;
     for (size_t i = 0; i < sorted.size(); ++i) {
         if (filtered.empty()) {
@@ -161,7 +212,6 @@ HorizontalLightbarGroup LightbarDetector::filterRowGroup(
         if (distance < max_group_distance_) {
             filtered.push_back(sorted[i]);
         } else if (filtered.size() >= min_lightbars_per_row_) {
-            // 如果间距太大，考虑作为新组
             break;
         } else {
             filtered.clear();
@@ -169,7 +219,6 @@ HorizontalLightbarGroup LightbarDetector::filterRowGroup(
         }
     }
     
-    // 检查灯条数量是否符合要求
     if (filtered.size() < min_lightbars_per_row_ || 
         filtered.size() > max_lightbars_per_row_) {
         return group;
@@ -177,7 +226,6 @@ HorizontalLightbarGroup LightbarDetector::filterRowGroup(
     
     group.lightbars = filtered;
     
-    // 计算组中心
     cv::Point2f center(0, 0);
     float y_level = 0;
     int valid_count = 0;
@@ -194,7 +242,6 @@ HorizontalLightbarGroup LightbarDetector::filterRowGroup(
     group.center = center;
     group.y_level = y_level;
     
-    // 计算置信度（基于灯条数量一致性）
     if (max_lightbars_per_row_ == 3) {
         if (filtered.size() == 3) group.confidence = 1.0f;
         else if (filtered.size() == 2) group.confidence = 0.7f;
@@ -213,33 +260,28 @@ std::vector<ParallelLightbarSet> LightbarDetector::matchTopBottomRows(
     
     if (rows.size() < 2) return results;
     
-    // 按 Y 坐标排序
     std::vector<HorizontalLightbarGroup> sorted_rows = rows;
     std::sort(sorted_rows.begin(), sorted_rows.end(),
         [](const HorizontalLightbarGroup& a, const HorizontalLightbarGroup& b) {
             return a.y_level < b.y_level;
         });
     
-    // 匹配上排和下排
     for (size_t i = 0; i < sorted_rows.size() - 1; ++i) {
         for (size_t j = i + 1; j < sorted_rows.size(); ++j) {
             const auto& top = sorted_rows[i];
             const auto& bottom = sorted_rows[j];
             
-            // 检查上下排距离
             float vertical_distance = bottom.y_level - top.y_level;
             if (vertical_distance < min_top_bottom_distance_ || 
                 vertical_distance > max_top_bottom_distance_) {
                 continue;
             }
             
-            // 检查灯条数量一致性（2x2, 2x3, 3x3）
             int top_count = top.lightbars.size();
             int bottom_count = bottom.lightbars.size();
             
             if (std::abs(top_count - bottom_count) > 1) continue;
             
-            // 检查水平对齐（每对灯条的 X 坐标应该相近）
             bool aligned = true;
             float max_x_diff = 20.0f;
             
@@ -253,32 +295,26 @@ std::vector<ParallelLightbarSet> LightbarDetector::matchTopBottomRows(
             
             if (!aligned) continue;
             
-            // 创建组合
             ParallelLightbarSet set;
             set.top_row = top;
             set.bottom_row = bottom;
             set.top_to_bottom_distance = vertical_distance;
-            
-            // 计算整体中心
             set.center = (top.center + bottom.center) / 2;
             
-            // 计算四个角点
             float min_x = std::min(top.lightbars.front().center.x, bottom.lightbars.front().center.x);
             float max_x = std::max(top.lightbars.back().center.x, bottom.lightbars.back().center.x);
             float min_y = top.y_level - top.lightbars.front().length / 2;
             float max_y = bottom.y_level + bottom.lightbars.front().length / 2;
             
             set.corners = {
-                cv::Point2f(min_x, min_y),  // 左上
-                cv::Point2f(max_x, min_y),  // 右上
-                cv::Point2f(max_x, max_y),  // 右下
-                cv::Point2f(min_x, max_y)   // 左下
+                cv::Point2f(min_x, min_y),
+                cv::Point2f(max_x, min_y),
+                cv::Point2f(max_x, max_y),
+                cv::Point2f(min_x, max_y)
             };
             
-            // 计算整体置信度
             set.confidence = (top.confidence + bottom.confidence) / 2;
             
-            // 根据灯条数量调整置信度
             if (top_count == 3 && bottom_count == 3) set.confidence *= 1.0f;
             else if (top_count == 2 && bottom_count == 2) set.confidence *= 0.8f;
             else set.confidence *= 0.6f;
@@ -287,7 +323,6 @@ std::vector<ParallelLightbarSet> LightbarDetector::matchTopBottomRows(
         }
     }
     
-    // 非极大值抑制（NMS）
     std::vector<ParallelLightbarSet> final_results;
     std::vector<bool> suppressed(results.size(), false);
     
@@ -309,20 +344,11 @@ std::vector<ParallelLightbarSet> LightbarDetector::matchTopBottomRows(
 }
 
 std::vector<ParallelLightbarSet> LightbarDetector::detect(const cv::Mat& img, const cv::Rect& roi) {
-    // 1. 检测所有灯条
     auto lightbars = detectLightbars(img, roi);
-    
     if (lightbars.empty()) return {};
-    
-    // 2. 按行分组
     auto rows = groupByRow(lightbars);
-    
-    if (rows.size() < 2) return {};
-    
-    // 3. 匹配上下排
-    auto results = matchTopBottomRows(rows);
-    
-    return results;
+    if (rows.empty()) return {};
+    return matchTopBottomRows(rows);
 }
 
 } // namespace drone_detection

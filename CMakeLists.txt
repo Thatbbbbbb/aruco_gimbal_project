@@ -91,6 +91,23 @@ target_link_libraries(gimbal_node
     ${LIBUSB_LIBRARIES}
     MvCameraControl
 )
+add_executable(camera_test test/camera_test.cpp)
+
+# 链接必要的库
+target_link_libraries(camera_test
+    ${OpenCV_LIBS}
+    yaml-cpp
+    spdlog
+    fmt
+    pthread
+    dl
+)
+
+# 添加头文件路径
+target_include_directories(camera_test PRIVATE
+    ${PROJECT_SOURCE_DIR}
+    ${OpenCV_INCLUDE_DIRS}
+)
 
 set_target_properties(gimbal_node PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 

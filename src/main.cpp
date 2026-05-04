@@ -1,5 +1,5 @@
-#include "serial_port.h"
-#include "engineer_kinematics.hpp"
+// #include "serial_port.h"
+// #include "engineer_kinematics.hpp"
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/core/types.hpp>
@@ -12,7 +12,7 @@
 #include <mutex>
 #include "drone.hpp"
 #include "yolos/hrt_yolo.hpp"
-#include "gimbal_coordinate.hpp"
+// #include "gimbal_coordinate.hpp"
 #include "camera.hpp"
 #include "tasks/lightbar_detector.hpp"  // 添加灯条检测器
 
@@ -23,6 +23,8 @@ double getTimeSeconds() {
     return std::chrono::duration<double>(duration).count();
 }
 
+// 注释掉云台相关函数
+/*
 std::vector<float> convertEulerListToVector(const std::vector<std::array<float, 3>>& euler_list)
 {
     std::vector<float> result;
@@ -57,56 +59,53 @@ std::vector<float> rad_to_deg(const std::vector<float>& rad_vec) {
     }
     return deg_vec;
 }
+*/
 
 int main(int argc, char** argv) {
 
     // ======================
-    // 1. 初始化串口（云台）
+    // 注释掉串口初始化
     // ======================
-    hitcrt::serial::SerialPort serial("/dev/ttyUSB0", 100);
-    if (!serial.open_port()) {
-        std::cerr << "Failed to init serial port!" << std::endl;
-        return -1;
-    }
+    // hitcrt::serial::SerialPort serial("/dev/ttyUSB0", 100);
+    // if (!serial.open_port()) {
+    //     std::cerr << "Failed to init serial port!" << std::endl;
+    //     return -1;
+    // }
 
     // ======================
-    // 2. 初始化运动学
+    // 注释掉运动学初始化
     // ======================
-    hitcrt::kinematics::params my_params;
-    hitcrt::kinematics::engineer_kinematics kin(my_params);
+    // hitcrt::kinematics::params my_params;
+    // hitcrt::kinematics::engineer_kinematics kin(my_params);
 
     // ======================
-    // 3. 初始化无人机检测器
+    // 1. 初始化无人机检测器
     // ======================
-    std::string config_path = "config/drone.yaml";
+    std::string config_path = "/home/thatbbbbbb/projects/aruco_gimbal_project/config/drone.yaml";
     drone_detection::DroneDetector detector(config_path, false);
     
     // ======================
-    // 4. 初始化灯条检测器
+    // 2. 初始化灯条检测器
     // ======================
     drone_detection::LightbarDetector lightbar_detector;
     
     // ======================
-    // 5. 初始化相机
+    // 3. 初始化相机
     // ======================
-    io::Camera camera("config/camera.yaml");
+    io::Camera camera("/home/thatbbbbbb/projects/aruco_gimbal_project/config/camera.yaml");
     
     // ======================
-    // 6. 加载相机标定参数
+    // 注释掉相机标定和坐标转换
     // ======================
-    CameraConfig cam_config;
-    cam_config.load("config/camera_calibration.yaml");
-    
-    // ======================
-    // 7. 创建坐标转换器
-    // ======================
-    GimbalCoordinateConverter converter(cam_config);
+    // CameraConfig cam_config;
+    // cam_config.load("config/camera_calibration.yaml");
+    // GimbalCoordinateConverter converter(cam_config);
 
     // ======================
-    // 云台角度变量
+    // 云台角度变量（保留但未使用）
     // ======================
     int frame_count = 0;
-    std::vector<float> current_joint_angles(3);
+    // std::vector<float> current_joint_angles(3);
     
     float pitch_deg = 0.0f;
     float roll_deg = 0.0f;
@@ -119,15 +118,21 @@ int main(int argc, char** argv) {
     // 目标追踪相关
     bool has_target = false;
     float target_confidence = 0.0f;
-    cv::Point2f target_pixel;           // 瞄准点（灯条组中心）
+    cv::Point2f target_pixel;
     cv::Point2f target_center_norm;
-    cv::Rect current_roi;               // 当前ROI区域
+    cv::Rect current_roi;
     
-    // 目标位姿
-    Eigen::Isometry3d T_desired;
+    // 统计变量
+    int total_frames = 0;
+    int lightbar_detected_frames = 0;
 
-    std::cout << "Starting drone tracking system..." << std::endl;
-    std::cout << "Output format: frame_id, has_target, x, y, z, distance, yaw_angle, pitch_angle, confidence" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "Drone Detection Test Program" << std::endl;
+    std::cout << "Green Box: Drone ROI" << std::endl;
+    std::cout << "Red Box: Lightbar Set" << std::endl;
+    std::cout << "Yellow Circle: Aim Point (Lightbar Center)" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "Output format: frame_id, has_target, lightbar_center_x, lightbar_center_y, confidence" << std::endl;
     std::cout << "========================================" << std::endl;
 
     while (true) {
@@ -142,6 +147,7 @@ int main(int argc, char** argv) {
         
         if (!frame.empty()) {
             frame_count++;
+            total_frames++;
             cv::Mat display_frame = frame.clone();
             
             // ======================
@@ -151,7 +157,7 @@ int main(int argc, char** argv) {
             
             cv::Rect target_roi;
             bool found_lightbar = false;
-            cv::Point2f aim_point;  // 最终瞄准点
+            cv::Point2f aim_point;
             
             if (!drones.empty()) {
                 // 选择置信度最高的无人机
@@ -170,8 +176,11 @@ int main(int argc, char** argv) {
                 target_roi.width = std::min(frame.cols - target_roi.x, target_roi.width + 2 * expand);
                 target_roi.height = std::min(frame.rows - target_roi.y, target_roi.height + 2 * expand);
                 
-                // 绘制ROI区域
+                // 绘制绿色ROI框（无人机检测区域）
                 cv::rectangle(display_frame, target_roi, cv::Scalar(0, 255, 0), 2);
+                cv::putText(display_frame, "Drone ROI", 
+                            cv::Point(target_roi.x, target_roi.y - 5),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
                 
                 // ======================
                 // 第二步：在ROI内检测灯条组
@@ -190,20 +199,25 @@ int main(int argc, char** argv) {
                     aim_point = best_set->center;
                     found_lightbar = true;
                     target_confidence = best_set->confidence;
+                    lightbar_detected_frames++;
                     
                     // ======================
-                    // 可视化灯条组
+                    // 绘制红色灯条组框
                     // ======================
+                    // 计算灯条组的外接矩形
+                    if (best_set->corners.size() >= 4) {
+                        std::vector<cv::Point> box_points;
+                        for (const auto& corner : best_set->corners) {
+                            box_points.push_back(cv::Point((int)corner.x, (int)corner.y));
+                        }
+                        cv::polylines(display_frame, box_points, true, cv::Scalar(0, 0, 255), 2);
+                    }
+                    
                     // 绘制整体中心（黄色大圆）- 瞄准点
                     cv::circle(display_frame, aim_point, 10, cv::Scalar(0, 255, 255), -1);
-                    cv::putText(display_frame, "AIM", 
-                                cv::Point(aim_point.x - 20, aim_point.y - 10),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 2);
-                    
-                    // 绘制四个角点（青色）
-                    for (const auto& corner : best_set->corners) {
-                        cv::circle(display_frame, corner, 3, cv::Scalar(255, 255, 0), -1);
-                    }
+                    cv::putText(display_frame, "AIM POINT", 
+                                cv::Point(aim_point.x - 30, aim_point.y - 10),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1);
                     
                     // 绘制上下排中心（红色和蓝色）
                     cv::circle(display_frame, best_set->top_row.center, 4, cv::Scalar(0, 0, 255), -1);
@@ -211,7 +225,7 @@ int main(int argc, char** argv) {
                     
                     // 绘制上下排连接线
                     cv::line(display_frame, best_set->top_row.center, 
-                             best_set->bottom_row.center, cv::Scalar(0, 255, 0), 2);
+                             best_set->bottom_row.center, cv::Scalar(255, 0, 255), 2);
                     
                     // 显示灯条数量信息
                     std::string info = cv::format("Top:%d Bot:%d Conf:%.2f", 
@@ -219,116 +233,72 @@ int main(int argc, char** argv) {
                         (int)best_set->bottom_row.lightbars.size(),
                         best_set->confidence);
                     cv::putText(display_frame, info, 
-                                cv::Point(aim_point.x - 30, aim_point.y + 20),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255), 1);
+                                cv::Point(aim_point.x - 40, aim_point.y + 20),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255), 1);
+                    
+                    // ======================
+                    // 终端输出灯条组中心坐标
+                    // ======================
+                    std::cout << "Frame " << frame_count 
+                              << " | Lightbar Center: (" 
+                              << std::fixed << std::setprecision(2) 
+                              << aim_point.x << ", " << aim_point.y << ")"
+                              << " | Confidence: " << target_confidence
+                              << " | Top:" << best_set->top_row.lightbars.size()
+                              << " Bot:" << best_set->bottom_row.lightbars.size()
+                              << std::endl;
                     
                 } else {
-                    // 没有检测到灯条组，使用无人机中心作为备选
-                    aim_point = best_drone->center;
-                    target_confidence = best_drone->confidence * 0.5;  // 降低置信度
-                    
-                    cv::circle(display_frame, aim_point, 8, cv::Scalar(0, 255, 0), -1);
-                    cv::putText(display_frame, "DRONE CENTER (FALLBACK)", 
-                                cv::Point(aim_point.x - 80, aim_point.y - 10),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 0), 1);
+                    // 没有检测到灯条组
+                    std::cout << "Frame " << frame_count 
+                              << " | No lightbar detected in drone ROI"
+                              << std::endl;
                 }
                 
-                // ======================
-                // 更新追踪目标
-                // ======================
-                has_target = true;
-                target_pixel = aim_point;
-                target_center_norm = cv::Point2f(
-                    target_pixel.x / frame.cols,
-                    target_pixel.y / frame.rows
-                );
-                
-                // 转换为云台坐标系下的3D坐标
-                GimbalPoint3D gimbal_pos = converter.pixelToGimbal(target_pixel);
-                
-                // 输出瞄准点坐标
-                std::cout << frame_count << ","
-                          << "1" << ","
-                          << gimbal_pos.x << ","
-                          << gimbal_pos.y << ","
-                          << gimbal_pos.z << ","
-                          << gimbal_pos.distance << ","
-                          << gimbal_pos.yaw_angle << ","
-                          << gimbal_pos.pitch_angle << ","
-                          << target_confidence 
-                          << ",LIGHTBAR"  // 标记来源
-                          << std::endl;
-                
-                // 根据瞄准点计算云台目标角度
-                float target_yaw = target_center_norm.x * 60.0f - 30.0f;
-                float target_pitch = target_center_norm.y * 60.0f - 30.0f;
-                
-                pitch_deg = std::clamp(target_pitch, -30.0f, 30.0f);
-                yaw_deg = std::clamp(target_yaw, -30.0f, 30.0f);
-                
-                // 重置扫描时间
-                last_scan_time = current_time;
-                
-                // 在图像上显示瞄准点坐标
+                // 显示无人机置信度
                 cv::putText(display_frame, 
-                            cv::format("Target: (%.1f, %.1f)", target_pixel.x, target_pixel.y),
-                            cv::Point(10, 60),
-                            cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2);
+                            cv::format("Drone Conf: %.2f", best_drone->confidence),
+                            cv::Point(target_roi.x, target_roi.y + target_roi.height + 15),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
                 
             } else {
-                has_target = false;
+                // 没有检测到无人机
+                std::cout << "Frame " << frame_count 
+                          << " | No drone detected" << std::endl;
                 
-                // 无目标时输出
-                std::cout << frame_count << ",0,0,0,0,0,0,0,0,NO_TARGET" << std::endl;
-                
-                // 扫描模式
+                // 扫描模式提示
                 if (current_time - last_scan_time >= scan_interval) {
                     scan_angle = (scan_angle >= 30.0f) ? -30.0f : scan_angle + 10.0f;
-                    yaw_deg = scan_angle;
                     last_scan_time = current_time;
                 }
             }
             
-            // 显示帧数和状态
+            // ======================
+            // 显示统计信息
+            // ======================
             cv::putText(display_frame, cv::format("Frame: %d", frame_count), 
                         cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, 
-                        has_target ? cv::Scalar(0, 255, 0) : cv::Scalar(255, 255, 255), 2);
+                        cv::Scalar(255, 255, 255), 2);
+            
+            cv::putText(display_frame, cv::format("Drone Detected: %s", 
+                        (!drones.empty()) ? "YES" : "NO"), 
+                        cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.5, 
+                        (!drones.empty()) ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255), 1);
+            
+            cv::putText(display_frame, cv::format("Lightbar Set: %s", 
+                        (found_lightbar) ? "YES" : "NO"), 
+                        cv::Point(10, 85), cv::FONT_HERSHEY_SIMPLEX, 0.5, 
+                        (found_lightbar) ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 0, 255), 1);
+            
+            // 显示说明文字
+            cv::putText(display_frame, "Green: Drone ROI | Red: Lightbar Set | Yellow: Aim Point", 
+                        cv::Point(10, frame.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.45, 
+                        cv::Scalar(200, 200, 200), 1);
             
             // 显示图像
-            cv::imshow("Drone Detection", display_frame);
+            cv::imshow("Drone Detection Test", display_frame);
         }
         
-        // ======================
-        // 更新目标位姿（用于云台控制）
-        // ======================
-        T_desired = eulerToIsometry(
-            roll_deg * M_PI / 180.0f,
-            pitch_deg * M_PI / 180.0f,
-            yaw_deg * M_PI / 180.0f
-        );
-
-        // ======================
-        // 接收云台当前角度
-        // ======================
-        if (!serial.receive_motor_angles(current_joint_angles)) {
-            // 接收失败，继续使用目标角度
-        }
-
-        // ======================
-        // 逆解计算并发送云台角度
-        // ======================
-        std::vector<std::array<float, 3>> euler_list;
-        bool success = kin.inverse_kinematics(T_desired, euler_list);
-
-        if (success && !euler_list.empty()) {
-            std::vector<float> euler_vector = convertEulerListToVector(euler_list);
-            std::vector<float> target_angles(euler_vector.begin(), euler_vector.begin() + 3);
-
-            if (!serial.send_motor_angles(target_angles)) {
-                std::cerr << "Send gimbal data failed!" << std::endl;
-            }
-        }
-
         // ======================
         // 键盘控制
         // ======================
@@ -336,40 +306,38 @@ int main(int argc, char** argv) {
         switch (key) {
             case 'q':
             case 'Q':
+                std::cout << "\n========================================" << std::endl;
+                std::cout << "Test Summary:" << std::endl;
+                std::cout << "Total Frames: " << total_frames << std::endl;
+                std::cout << "Frames with Lightbar: " << lightbar_detected_frames << std::endl;
+                if (total_frames > 0) {
+                    std::cout << "Detection Rate: " 
+                              << (float)lightbar_detected_frames / total_frames * 100 
+                              << "%" << std::endl;
+                }
+                std::cout << "========================================" << std::endl;
                 std::cout << "Exiting..." << std::endl;
                 goto exit;
-            case 'w':
-                pitch_deg += 5.0f;
-                pitch_deg = std::clamp(pitch_deg, -30.0f, 30.0f);
-                std::cout << "Manual pitch: " << pitch_deg << "°" << std::endl;
                 break;
             case 's':
-                pitch_deg -= 5.0f;
-                pitch_deg = std::clamp(pitch_deg, -30.0f, 30.0f);
-                std::cout << "Manual pitch: " << pitch_deg << "°" << std::endl;
+                // 保存当前帧
+                {
+                    cv::Mat screenshot;
+                    camera.read(screenshot, timestamp);
+                    std::string filename = cv::format("screenshot_%d.jpg", frame_count);
+                    cv::imwrite(filename, screenshot);
+                    std::cout << "Screenshot saved: " << filename << std::endl;
+                }
                 break;
-            case 'a':
-                yaw_deg -= 5.0f;
-                yaw_deg = std::clamp(yaw_deg, -30.0f, 30.0f);
-                std::cout << "Manual yaw: " << yaw_deg << "°" << std::endl;
-                break;
-            case 'd':
-                yaw_deg += 5.0f;
-                yaw_deg = std::clamp(yaw_deg, -30.0f, 30.0f);
-                std::cout << "Manual yaw: " << yaw_deg << "°" << std::endl;
-                break;
-            case ' ':
-                pitch_deg = 0;
-                yaw_deg = 0;
-                std::cout << "Angles reset!" << std::endl;
+            default:
                 break;
         }
 
-        usleep(10000);
+        usleep(10000); // 10ms loop
     }
     
 exit:
-    serial.close_port();
+    // serial.close_port();  // 注释掉
     cv::destroyAllWindows();
     return 0;
 }

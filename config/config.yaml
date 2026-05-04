@@ -1,6 +1,24 @@
+#灯条检测相关
+lightbar:
+  color: blue        # blue / red / purple
+  h_min: 90
+  h_max: 130
+  s_min: 40
+  s_max: 255
+  v_min: 200
+  v_max: 255
 
-color: "red"  
-
+detect:
+  min_area: 20
+  max_area: 1000
+  min_ratio: 3.0 
+  max_ratio: 6
+  max_angle_error: 20.0 # 灯条与水平线的最大夹角（度）
+  max_group_distance: 50
+  min_row_lightbars: 2
+  max_row_lightbars: 3
+  min_top_bottom_distance: 20
+  max_top_bottom_distance: 100
 # 相机内参
 camera_intrinsics:
   fx: 800.0          # 焦距 x (像素)
