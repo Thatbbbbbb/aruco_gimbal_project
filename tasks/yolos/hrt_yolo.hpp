@@ -11,7 +11,7 @@
 #include "deploy/result.hpp"
 
 namespace drone_detection {
-
+cv::Mat resizeAndPad(const cv::Mat& src, int dst_width, int dst_height, float& scale, cv::Point2f& offset);
 class DroneDetector {
 public:
     DroneDetector(const std::string& config_path, bool debug = false);
@@ -41,6 +41,9 @@ private:
     std::string save_path_;
     cv::Mat tmp_img_;
     cv::Size source_size_;
+    int input_width_ = 640;
+    int input_height_ = 640;
+    float last_scale_ = 1.0f;
 };
 
 } // namespace drone_detection

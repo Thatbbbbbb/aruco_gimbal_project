@@ -153,7 +153,11 @@ int main(int argc, char** argv) {
             // ======================
             // 第一步：检测无人机（获取ROI）
             // ======================
-            auto drones = detector.detect(frame, frame_count);
+            int target_w = 640, target_h = 640;
+            float scale;
+            cv::Point2f offset;
+            cv::Mat processed_frame = drone_detection::resizeAndPad(frame, target_w, target_h, scale, offset);
+            auto drones = detector.detect(processed_frame, frame_count);
             
             cv::Rect target_roi;
             bool found_lightbar = false;
