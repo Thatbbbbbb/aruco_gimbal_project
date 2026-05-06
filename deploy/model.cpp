@@ -253,11 +253,57 @@ SegmentRes BaseModel<SegmentRes>::postProcess(int idx) {
 // PoseModel 的后处理方法实现
 template <>
 PoseRes BaseModel<PoseRes>::postProcess(int idx) {
+    // 诊断：首次推理时打印所有张量信息，帮助定位 engine 布局不匹配问题
+    static bool first_call = true;
+    if (first_call) {
+        first_call = false;
+        std::cerr << "[DEBUG] postProcess<PoseRes>: backend_->tensor_infos has "
+                  << backend_->tensor_infos.size() << " tensors:" << std::endl;
+        for (size_t i = 0; i < backend_->tensor_infos.size(); ++i) {
+            auto& t = backend_->tensor_infos[i];
+            std::cerr << "  [" << i << "] name=\"" << t.name
+                      << "\" input=" << t.input
+                      << " shape=[";
+            for (int d = 0; d < t.shape.nbDims; ++d) {
+                std::cerr << t.shape.d[d];
+                if (d + 1 < t.shape.nbDims) std::cerr << ",";
+            }
+            std::cerr << "] host=" << t.buffer->host()
+                      << " device=" << t.buffer->device()
+                      << " size=" << t.buffer->size() << std::endl;
+        }
+    }
+
+    // 防御性检查：输出张量数量校验
+    if (backend_->tensor_infos.size() < 6) {
+        std::cerr << "[ERROR] postProcess<PoseRes> expects at least 6 tensors (1 input + 5 outputs), "
+                  << "but only " << backend_->tensor_infos.size() << " found. "
+                  << "Your TensorRT engine may be a standard YOLO detect model with a single combined output, "
+                  << "not compatible with PoseRes format which requires separate num/boxes/scores/classes/kpts tensors."
+                  << std::endl;
+        return PoseRes{};
+    }
+
     auto& num_tensor   = backend_->tensor_infos[1];
     auto& box_tensor   = backend_->tensor_infos[2];
     auto& score_tensor = backend_->tensor_infos[3];
     auto& class_tensor = backend_->tensor_infos[4];
     auto& kpt_tensor   = backend_->tensor_infos[5];
+
+    // 防御性检查：确保各张量的 host() 非空
+    if (!num_tensor.buffer->host() || !box_tensor.buffer->host() ||
+        !score_tensor.buffer->host() || !class_tensor.buffer->host() ||
+        !kpt_tensor.buffer->host()) {
+        std::cerr << "[ERROR] postProcess<PoseRes>: one or more output tensors have nullptr host buffer. "
+                  << "num_host=" << num_tensor.buffer->host() << " name=\"" << num_tensor.name << "\" input=" << num_tensor.input
+                  << ", box_host=" << box_tensor.buffer->host() << " name=\"" << box_tensor.name << "\" input=" << box_tensor.input
+                  << ", score_host=" << score_tensor.buffer->host() << " name=\"" << score_tensor.name << "\" input=" << score_tensor.input
+                  << ", class_host=" << class_tensor.buffer->host() << " name=\"" << class_tensor.name << "\" input=" << class_tensor.input
+                  << ", kpt_host=" << kpt_tensor.buffer->host() << " name=\"" << kpt_tensor.name << "\" input=" << kpt_tensor.input
+                  << std::endl;
+        return PoseRes{};
+    }
+
     int   nkpt         = kpt_tensor.shape.d[2];
     int   ndim         = kpt_tensor.shape.d[3];
 

@@ -342,7 +342,26 @@ std::list<Drone> DroneDetector::detect(const cv::Mat& raw_img, int frame_count) 
 
     deploy::Image input_image(processed_img.data, processed_img.cols, processed_img.rows);
     deploy::PoseRes result = model_->predict(input_image);
-
+/*
+    // 添加这段临时打印
+    static bool dbg_printed = false;
+    if (!dbg_printed) {
+        dbg_printed = true;
+        const auto& tensors = model_->getBackend()->tensor_infos;  // 可能需要暴露 getter
+        std::cerr << "[MANUAL DEBUG] Tensor count: " << tensors.size() << std::endl;
+        for (size_t i = 0; i < tensors.size(); ++i) {
+            auto& t = tensors[i];
+            std::cerr << "  [" << i << "] name=\"" << t.name
+                    << "\" input=" << t.input
+                    << " shape=[";
+            for (int d = 0; d < t.shape.nbDims; ++d) {
+                std::cerr << t.shape.d[d];
+                if (d + 1 < t.shape.nbDims) std::cerr << ",";
+            }
+            std::cerr << "] size=" << t.buffer->size() << " bytes" << std::endl;
+        }
+    }
+*/
     postprocess(result, drones);
     nms_filter(drones);
 

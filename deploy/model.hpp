@@ -26,6 +26,10 @@ public:
     // 私有的无参构造函数，仅在 clone 方法中使用
     BaseModel()  = default;
     ~BaseModel() = default;
+    /**
+     * 临时添加公共访问器,拆分融合的张量
+     */
+    auto& getBackend() { return backend_; }
 
     /**
      * @brief 构造一个新的 BaseModel 对象
