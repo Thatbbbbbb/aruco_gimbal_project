@@ -1,4 +1,5 @@
-#include "drone_detector.hpp"
+/*
+#include "hrt_yolo.hpp"
 
 int main() {
     // 初始化检测器
@@ -48,3 +49,4 @@ int main() {
     
     return 0;
 }
+*/

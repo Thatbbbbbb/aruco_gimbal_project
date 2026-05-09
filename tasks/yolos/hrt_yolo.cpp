@@ -109,6 +109,8 @@ DroneDetector::DroneDetector(const std::string& config_path, bool debug)
 void DroneDetector::preprocess(const cv::Mat& raw_img, cv::Mat& processed_img) {
     offset_ = cv::Point2f(0.0f, 0.0f);
     last_scale_ = 1.0f;
+    float pad_left_ = 0.0f;   // 新增：记录水平填充（单位：像素）
+    float pad_top_ = 0.0f;    // 新增：记录垂直填充
 
     if (raw_img.empty()) {
         processed_img.release();
@@ -123,7 +125,6 @@ void DroneDetector::preprocess(const cv::Mat& raw_img, cv::Mat& processed_img) {
             roi_img = raw_img(valid_roi).clone();
             offset_ = cv::Point2f(static_cast<float>(valid_roi.x), static_cast<float>(valid_roi.y));
         } else {
-            // invalid roi, fall back to full image
             roi_img = raw_img.clone();
             offset_ = cv::Point2f(0.0f, 0.0f);
         }
@@ -132,7 +133,6 @@ void DroneDetector::preprocess(const cv::Mat& raw_img, cv::Mat& processed_img) {
         offset_ = cv::Point2f(0.0f, 0.0f);
     }
 
-    // 将 roi_img 按比例缩放，放置到左上角 (0,0)，右/下方填充黑边，目标尺寸为 input_width_ x input_height_
     int src_w = roi_img.cols;
     int src_h = roi_img.rows;
     if (src_w <= 0 || src_h <= 0) {
@@ -140,6 +140,7 @@ void DroneDetector::preprocess(const cv::Mat& raw_img, cv::Mat& processed_img) {
         return;
     }
 
+    // 计算缩放因子（等比例，使图像完全适应画布）
     float scale_x = static_cast<float>(input_width_) / static_cast<float>(src_w);
     float scale_y = static_cast<float>(input_height_) / static_cast<float>(src_h);
     float scale = std::min(scale_x, scale_y);
@@ -148,13 +149,21 @@ void DroneDetector::preprocess(const cv::Mat& raw_img, cv::Mat& processed_img) {
     int new_w = std::max(1, static_cast<int>(std::round(src_w * scale)));
     int new_h = std::max(1, static_cast<int>(std::round(src_h * scale)));
 
+    // 计算填充偏移（使图像居中）
+    pad_left_ = (input_width_ - new_w) / 2.0f;
+    pad_top_  = (input_height_ - new_h) / 2.0f;
+
+    // 创建画布并填充黑色（或灰色，通常用114）
     processed_img = cv::Mat::zeros(input_height_, input_width_, roi_img.type());
+    // 如果想要灰色填充，可以使用 cv::Scalar(114,114,114) 代替 zeros
+
     cv::Mat resized;
     cv::resize(roi_img, resized, cv::Size(new_w, new_h));
-    // 放到左上角 (0,0)
-    resized.copyTo(processed_img(cv::Rect(0, 0, new_w, new_h)));
+    // 放到居中位置
+    resized.copyTo(processed_img(cv::Rect(static_cast<int>(pad_left_),
+                                          static_cast<int>(pad_top_),
+                                          new_w, new_h)));
 }
-
 int DroneDetector::remap_class_id(int model_id) {
     return model_id;
 }
@@ -326,6 +335,102 @@ void DroneDetector::draw_detections(const cv::Mat& img, const std::list<Drone>& 
     cv::imshow("Drone Detection Debug", vis);
 }
 
+std::list<Drone> DroneDetector::parseOutputAndNMS(const float* output, int num_boxes) {
+    std::list<Drone> drones;
+    if (!output || num_boxes <= 0) return drones;
+
+    // 输出形状：NCHW，C=5 (x,y,w,h,obj)
+    const float* x_ptr   = output + 0 * num_boxes;
+    const float* y_ptr   = output + 1 * num_boxes;
+    const float* w_ptr   = output + 2 * num_boxes;
+    const float* h_ptr   = output + 3 * num_boxes;
+    const float* obj_ptr = output + 4 * num_boxes;
+
+    // 置信度阈值（同时考虑 min_confidence_ 兜底）
+    float thresh = std::min(confidence_threshold_, min_confidence_);
+
+    // 第一遍：收集所有通过阈值的候选框
+    struct Candidate {
+        float left, top, right, bottom;
+        float confidence;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(num_boxes);
+
+    for (int i = 0; i < num_boxes; ++i) {
+        float obj = obj_ptr[i];
+        if (obj < thresh) continue;   // 置信度过低，跳过
+
+        float x = x_ptr[i];
+        float y = y_ptr[i];
+        float w = w_ptr[i];
+        float h = h_ptr[i];
+
+        // 模型输出是 640×640 输入空间下的绝对坐标，需要映射回原图
+        // 映射公式：原图坐标 = 模型坐标 / scale + ROI偏移
+        float left   = (x - 0.5f * w) / last_scale_ + offset_.x;
+        float top    = (y - 0.5f * h) / last_scale_ + offset_.y;
+        float right  = (x + 0.5f * w) / last_scale_ + offset_.x;
+        float bottom = (y + 0.5f * h) / last_scale_ + offset_.y;
+
+        // 钳位到图像尺寸内
+        left   = std::clamp(left,   0.0f, static_cast<float>(source_size_.width  - 1));
+        top    = std::clamp(top,    0.0f, static_cast<float>(source_size_.height - 1));
+        right  = std::clamp(right,  0.0f, static_cast<float>(source_size_.width  - 1));
+        bottom = std::clamp(bottom, 0.0f, static_cast<float>(source_size_.height - 1));
+
+        if (right <= left || bottom <= top) continue;
+
+        candidates.push_back({left, top, right, bottom, obj});
+    }
+
+    // NMS（按置信度降序）
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b) {
+                  return a.confidence > b.confidence;
+              });
+
+    std::vector<Candidate> kept;
+    for (const auto& c : candidates) {
+        bool keep = true;
+        for (const auto& k : kept) {
+            float inter_left   = std::max(c.left,   k.left);
+            float inter_top    = std::max(c.top,    k.top);
+            float inter_right  = std::min(c.right,  k.right);
+            float inter_bottom = std::min(c.bottom, k.bottom);
+            if (inter_left < inter_right && inter_top < inter_bottom) {
+                float inter_area = (inter_right - inter_left) * (inter_bottom - inter_top);
+                float area_c = (c.right - c.left) * (c.bottom - c.top);
+                float area_k = (k.right - k.left) * (k.bottom - k.top);
+                float iou = inter_area / (area_c + area_k - inter_area);
+                if (iou > nms_threshold_) {
+                    keep = false;
+                    break;
+                }
+            }
+        }
+        if (keep) kept.push_back(c);
+    }
+
+    // 转换为 Drone 对象（没有真实关键点，用包围框四角替代）
+    for (const auto& c : kept) {
+        cv::Rect rect(cv::Point(cvRound(c.left), cvRound(c.top)),
+                      cv::Point(cvRound(c.right), cvRound(c.bottom)));
+        std::vector<cv::Point2f> pts = {
+            cv::Point2f(c.left, c.top),
+            cv::Point2f(c.right, c.top),
+            cv::Point2f(c.right, c.bottom),
+            cv::Point2f(c.left, c.bottom)
+        };
+        Drone drone(0, c.confidence, rect, pts);   // class_id暂用0
+        drone.center = cv::Point2f(rect.x + rect.width * 0.5f,
+                                   rect.y + rect.height * 0.5f);
+        drone.center_norm = cv::Point2f(drone.center.x / source_size_.width,
+                                        drone.center.y / source_size_.height);
+        drones.push_back(drone);
+    }
+    return drones;
+}
 std::list<Drone> DroneDetector::detect(const cv::Mat& raw_img, int frame_count) {
     std::list<Drone> drones;
     if (raw_img.empty() || !model_) {
@@ -339,31 +444,19 @@ std::list<Drone> DroneDetector::detect(const cv::Mat& raw_img, int frame_count) 
     if (processed_img.empty()) {
         return drones;
     }
+    
 
     deploy::Image input_image(processed_img.data, processed_img.cols, processed_img.rows);
-    deploy::PoseRes result = model_->predict(input_image);
-/*
-    // 添加这段临时打印
-    static bool dbg_printed = false;
-    if (!dbg_printed) {
-        dbg_printed = true;
-        const auto& tensors = model_->getBackend()->tensor_infos;  // 可能需要暴露 getter
-        std::cerr << "[MANUAL DEBUG] Tensor count: " << tensors.size() << std::endl;
-        for (size_t i = 0; i < tensors.size(); ++i) {
-            auto& t = tensors[i];
-            std::cerr << "  [" << i << "] name=\"" << t.name
-                    << "\" input=" << t.input
-                    << " shape=[";
-            for (int d = 0; d < t.shape.nbDims; ++d) {
-                std::cerr << t.shape.d[d];
-                if (d + 1 < t.shape.nbDims) std::cerr << ",";
-            }
-            std::cerr << "] size=" << t.buffer->size() << " bytes" << std::endl;
-        }
-    }
-*/
-    postprocess(result, drones);
-    nms_filter(drones);
+
+    // ----- 手动推理与解析融合输出 -----
+    model_->getBackend()->infer(std::vector<deploy::Image>{input_image});
+
+    auto& out_tensor = model_->getBackend()->tensor_infos[1];
+    float* output_data = static_cast<float*>(out_tensor.buffer->host());
+    int num_boxes = out_tensor.shape.d[2];  // 8400
+
+    drones = parseOutputAndNMS(output_data, num_boxes);
+    // ---------------------------------
 
     if (debug_) {
         draw_detections(raw_img, drones, frame_count);
@@ -371,5 +464,4 @@ std::list<Drone> DroneDetector::detect(const cv::Mat& raw_img, int frame_count) 
 
     return drones;
 }
-
 } // namespace drone_detection

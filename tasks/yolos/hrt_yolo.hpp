@@ -27,6 +27,11 @@ private:
     void nms_filter(std::list<Drone>& drones);
     void draw_detections(const cv::Mat& img, const std::list<Drone>& drones, int frame_count) const;
     
+    private:
+    /**
+     * @brief 从融合的 [1,5,8400] 输出直接解析检测框并做 NMS
+     */
+    std::list<Drone> parseOutputAndNMS(const float* output, int num_boxes);
     // 成员变量
     bool debug_;
     std::unique_ptr<deploy::BaseModel<deploy::PoseRes>> model_;

@@ -1,7 +1,7 @@
 # 海康相机配置
 camera_name: "hikrobot"
 exposure_ms: 70.0
-gain: 12.0
+gain: 0
 vid_pid: "2bdf:0001"
 serial_number: "DA4886227"
 width: 640
