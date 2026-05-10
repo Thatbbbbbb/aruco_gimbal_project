@@ -49,6 +49,8 @@ private:
     int input_width_ = 640;
     int input_height_ = 640;
     float last_scale_ = 1.0f;
+    float pad_left_;   // 水平填充（模型画布左边缘到有效图像的距离）
+    float pad_top_;    // 垂直填充
 };
 
 } // namespace drone_detection

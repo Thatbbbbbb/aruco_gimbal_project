@@ -109,8 +109,8 @@ DroneDetector::DroneDetector(const std::string& config_path, bool debug)
 void DroneDetector::preprocess(const cv::Mat& raw_img, cv::Mat& processed_img) {
     offset_ = cv::Point2f(0.0f, 0.0f);
     last_scale_ = 1.0f;
-    float pad_left_ = 0.0f;   // 新增：记录水平填充（单位：像素）
-    float pad_top_ = 0.0f;    // 新增：记录垂直填充
+    pad_left_ = 0.0f;   
+    pad_top_ = 0.0f;    
 
     if (raw_img.empty()) {
         processed_img.release();
