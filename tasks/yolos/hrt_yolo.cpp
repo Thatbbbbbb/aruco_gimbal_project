@@ -368,10 +368,10 @@ std::list<Drone> DroneDetector::parseOutputAndNMS(const float* output, int num_b
 
         // 模型输出是 640×640 输入空间下的绝对坐标，需要映射回原图
         // 映射公式：原图坐标 = 模型坐标 / scale + ROI偏移
-        float left   = (x - 0.5f * w) / last_scale_ + offset_.x;
-        float top    = (y - 0.5f * h) / last_scale_ + offset_.y;
-        float right  = (x + 0.5f * w) / last_scale_ + offset_.x;
-        float bottom = (y + 0.5f * h) / last_scale_ + offset_.y;
+        float left   = ((x - pad_left_) - 0.5f * w) / last_scale_ + offset_.x;
+        float top    = ((y - pad_top_)  - 0.5f * h) / last_scale_ + offset_.y;
+        float right  = ((x - pad_left_) + 0.5f * w) / last_scale_ + offset_.x;
+        float bottom = ((y - pad_top_)  + 0.5f * h) / last_scale_ + offset_.y;
 
         // 钳位到图像尺寸内
         left   = std::clamp(left,   0.0f, static_cast<float>(source_size_.width  - 1));
