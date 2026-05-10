@@ -21,7 +21,7 @@ public:
 
 private:
     void preprocess(const cv::Mat& raw_img, cv::Mat& processed_img);
-    void postprocess(const deploy::PoseRes& result, std::list<Drone>& drones);
+    void postprocess(const deploy::DetectRes& result, std::list<Drone>& drones);
     int remap_class_id(int model_id);
     void sort_keypoints(std::vector<cv::Point2f>& keypoints);
     void nms_filter(std::list<Drone>& drones);
@@ -34,7 +34,7 @@ private:
     std::list<Drone> parseOutputAndNMS(const float* output, int num_boxes);
     // 成员变量
     bool debug_;
-    std::unique_ptr<deploy::BaseModel<deploy::PoseRes>> model_;
+    std::unique_ptr<deploy::BaseModel<deploy::DetectRes>> model_;
     std::string model_path_;
     std::string device_;
     double confidence_threshold_;
