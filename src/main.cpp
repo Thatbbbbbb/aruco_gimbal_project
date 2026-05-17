@@ -8,6 +8,7 @@
 #include <iostream>
 #include <unistd.h>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <mutex>
 #include "drone.hpp"
@@ -173,12 +174,23 @@ int main(int argc, char** argv) {
                 // 获取无人机边界框作为ROI
                 target_roi = best_drone->box;
                 
-                // 扩展ROI区域（给灯条检测留出边距）
-                int expand = 40;
-                target_roi.x = std::max(0, target_roi.x - expand);
-                target_roi.y = std::max(0, target_roi.y - expand);
-                target_roi.width = std::min(frame.cols - target_roi.x, target_roi.width + 2 * expand);
-                target_roi.height = std::min(frame.rows - target_roi.y, target_roi.height + 2 * expand);
+                // 按中心等比放大 ROI，使面积约为原来的两倍
+                const float roi_scale = std::sqrt(2.0f);
+                const cv::Point2f roi_center(
+                    target_roi.x + target_roi.width * 0.5f,
+                    target_roi.y + target_roi.height * 0.5f);
+                const int scaled_width = std::max(1, static_cast<int>(std::round(target_roi.width * roi_scale)));
+                const int scaled_height = std::max(1, static_cast<int>(std::round(target_roi.height * roi_scale)));
+                cv::Rect scaled_roi(
+                    static_cast<int>(std::round(roi_center.x - scaled_width * 0.5f)),
+                    static_cast<int>(std::round(roi_center.y - scaled_height * 0.5f)),
+                    scaled_width,
+                    scaled_height);
+                target_roi = scaled_roi & cv::Rect(0, 0, frame.cols, frame.rows);
+
+                if (target_roi.empty()) {
+                    continue;
+                }
                 
                 // 绘制绿色ROI框（无人机检测区域）
                 cv::rectangle(display_frame, target_roi, cv::Scalar(0, 255, 0), 2);
@@ -189,77 +201,7 @@ int main(int argc, char** argv) {
                 // ======================
                 // 第二步：在ROI内检测灯条组
                 // ======================
-                auto lightbar_sets = lightbar_detector.detect(frame, target_roi);
-                
-                if (!lightbar_sets.empty()) {
-                    // 选择置信度最高的灯条组
-                    auto best_set = std::max_element(lightbar_sets.begin(), lightbar_sets.end(),
-                        [](const drone_detection::ParallelLightbarSet& a, 
-                           const drone_detection::ParallelLightbarSet& b) {
-                            return a.confidence < b.confidence;
-                        });
-                    
-                    // 瞄准点 = 灯条组中心
-                    aim_point = best_set->center;
-                    found_lightbar = true;
-                    target_confidence = best_set->confidence;
-                    lightbar_detected_frames++;
-                    
-                    // ======================
-                    // 绘制红色灯条组框
-                    // ======================
-                    // 计算灯条组的外接矩形
-                    if (best_set->corners.size() >= 4) {
-                        std::vector<cv::Point> box_points;
-                        for (const auto& corner : best_set->corners) {
-                            box_points.push_back(cv::Point((int)corner.x, (int)corner.y));
-                        }
-                        cv::polylines(display_frame, box_points, true, cv::Scalar(0, 0, 255), 2);
-                    }
-                    
-                    // 绘制整体中心（黄色大圆）- 瞄准点
-                    cv::circle(display_frame, aim_point, 10, cv::Scalar(0, 255, 255), -1);
-                    cv::putText(display_frame, "AIM POINT", 
-                                cv::Point(aim_point.x - 30, aim_point.y - 10),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1);
-                    
-                    // 绘制上下排中心（红色和蓝色）
-                    cv::circle(display_frame, best_set->top_row.center, 4, cv::Scalar(0, 0, 255), -1);
-                    cv::circle(display_frame, best_set->bottom_row.center, 4, cv::Scalar(255, 0, 0), -1);
-                    
-                    // 绘制上下排连接线
-                    cv::line(display_frame, best_set->top_row.center, 
-                             best_set->bottom_row.center, cv::Scalar(255, 0, 255), 2);
-                    
-                    // 显示灯条数量信息
-                    std::string info = cv::format("Top:%d Bot:%d Conf:%.2f", 
-                        (int)best_set->top_row.lightbars.size(),
-                        (int)best_set->bottom_row.lightbars.size(),
-                        best_set->confidence);
-                    cv::putText(display_frame, info, 
-                                cv::Point(aim_point.x - 40, aim_point.y + 20),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255), 1);
-                    
-                    // ======================
-                    // 终端输出灯条组中心坐标
-                    // ======================
-                    std::cout << "Frame " << frame_count 
-                              << " | Lightbar Center: (" 
-                              << std::fixed << std::setprecision(2) 
-                              << aim_point.x << ", " << aim_point.y << ")"
-                              << " | Confidence: " << target_confidence
-                              << " | Top:" << best_set->top_row.lightbars.size()
-                              << " Bot:" << best_set->bottom_row.lightbars.size()
-                              << std::endl;
-                    
-                } else {
-                    // 没有检测到灯条组
-                    std::cout << "Frame " << frame_count 
-                              << " | No lightbar detected in drone ROI"
-                              << std::endl;
-                }
-                
-                // 显示无人机置信度
+              
                 cv::putText(display_frame, 
                             cv::format("Drone Conf: %.2f", best_drone->confidence),
                             cv::Point(target_roi.x, target_roi.y + target_roi.height + 15),

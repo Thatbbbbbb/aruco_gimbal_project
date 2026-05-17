@@ -240,23 +240,35 @@ void DroneDetector::draw_detections(const cv::Mat& img, const std::list<Drone>& 
     cv::Mat vis = img.clone();
     for (const auto& drone : drones) {
         cv::Scalar color(0, 255, 0);
-        cv::rectangle(vis, drone.box, color, 2);
 
-        if (drone.points.size() >= 2) {
-            std::vector<cv::Point> polygon;
-            polygon.reserve(drone.points.size());
-            for (const auto& point : drone.points) {
-                polygon.emplace_back(cv::Point(cvRound(point.x), cvRound(point.y)));
-            }
-            const cv::Point* pts = polygon.data();
-            int npts = static_cast<int>(polygon.size());
-            cv::polylines(vis, &pts, &npts, 1, true, color, 2);
-        }
+        const float scale = std::sqrt(3.0f);
+        const float scaled_width = std::max(1.0f, static_cast<float>(drone.box.width) * scale);
+        const float scaled_height = std::max(1.0f, static_cast<float>(drone.box.height) * scale);
+        const cv::Point2f center(
+            drone.box.x + drone.box.width * 0.5f,
+            drone.box.y + drone.box.height * 0.5f);
+
+        cv::Rect lightbar_box(
+            static_cast<int>(std::round(center.x - scaled_width * 0.5f)),
+            static_cast<int>(std::round(center.y - scaled_height * 0.5f)),
+            static_cast<int>(std::round(scaled_width)),
+            static_cast<int>(std::round(scaled_height)));
+        lightbar_box &= cv::Rect(0, 0, vis.cols, vis.rows);
+
+        cv::rectangle(vis, lightbar_box, color, 2);
+
+        std::vector<cv::Point> polygon = {
+            cv::Point(lightbar_box.x, lightbar_box.y),
+            cv::Point(lightbar_box.x + lightbar_box.width, lightbar_box.y),
+            cv::Point(lightbar_box.x + lightbar_box.width, lightbar_box.y + lightbar_box.height),
+            cv::Point(lightbar_box.x, lightbar_box.y + lightbar_box.height)
+        };
+        cv::polylines(vis, polygon, true, color, 2);
 
         cv::circle(vis, drone.center, 3, cv::Scalar(0, 0, 255), -1);
 
-        std::string label = fmt::format("cls:{} conf:{:.2f}", drone.class_id, drone.confidence);
-        cv::putText(vis, label, cv::Point(drone.box.x, std::max(0, drone.box.y - 6)),
+        std::string label = fmt::format("lightbar cls:{} conf:{:.2f}", drone.class_id, drone.confidence);
+        cv::putText(vis, label, cv::Point(lightbar_box.x, std::max(0, lightbar_box.y - 6)),
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv::LINE_AA);
     }
 
@@ -302,10 +314,10 @@ std::list<Drone> DroneDetector::parseOutputAndNMS(const float* output, int num_b
 
         // 模型输出是 640×640 输入空间下的绝对坐标，需要映射回原图
         // 映射公式：原图坐标 = 模型坐标 / scale + ROI偏移
-        float left   = ((x - pad_left_) - 0.5f * w) / last_scale_ + offset_.x;
-        float top    = ((y - pad_top_)  - 0.5f * h) / last_scale_ + offset_.y;
-        float right  = ((x - pad_left_) + 0.5f * w) / last_scale_ + offset_.x;
-        float bottom = ((y - pad_top_)  + 0.5f * h) / last_scale_ + offset_.y;
+        float left   = (x - pad_left_) / last_scale_ + offset_.x;
+        float top    = (y - pad_top_) / last_scale_ + offset_.y;
+        float right  = ((x - pad_left_) + w) / last_scale_ + offset_.x;
+        float bottom = ((y - pad_top_) + h) / last_scale_ + offset_.y;
 
         // 钳位到图像尺寸内
         left   = std::clamp(left,   0.0f, static_cast<float>(source_size_.width  - 1));

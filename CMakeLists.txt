@@ -40,7 +40,8 @@ endif()
 
 add_definitions(-DMACRO_AIMASSISTNN_FLAG -DDISABLE_ROS2)
 add_subdirectory(deploy)
-
+add_subdirectory(test)
+add_subdirectory(io)
 # ========== 头文件路径 ==========
 include_directories(
     ${PROJECT_SOURCE_DIR}
@@ -48,6 +49,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/tasks
     ${PROJECT_SOURCE_DIR}/tasks/yolos
+    ${PROJECT_SOURCE_DIR}/tasks/yolos/lightbar
     ${PROJECT_SOURCE_DIR}/io
     ${PROJECT_SOURCE_DIR}/io/hikrobot/include
     ${PROJECT_SOURCE_DIR}/tools
@@ -60,7 +62,7 @@ include_directories(
 
 # ========== 源文件 ==========
 set(MAIN_SOURCES src/main.cpp src/serial_port.cpp)
-file(GLOB TASK_SOURCES tasks/yolos/*.cpp tasks/lightbar_detector.cpp)
+file(GLOB TASK_SOURCES tasks/yolos/*.cpp tasks/lightbar.cpp)
 file(GLOB IO_SOURCES io/*.cpp io/hikrobot/hikrobot.cpp)
 file(GLOB TOOL_SOURCES tools/*.cpp)
 
