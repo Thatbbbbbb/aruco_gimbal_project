@@ -7,6 +7,7 @@
                 "${workspaceFolder}/tasks",
                 "${workspaceFolder}/tools",
                 "${workspaceFolder}/tasks/yolos",
+                "${workspaceFolder}/io",
                 "/usr/include/opencv4",
                 "/usr/include/eigen3",
                 "/usr/local/cuda-11.8/include", 

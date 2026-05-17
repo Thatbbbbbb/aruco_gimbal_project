@@ -2,54 +2,78 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <iomanip>
+#include <chrono>
 #include "camera.hpp"
+#include "serial_port.h"
+#include "engineer_kinematics.hpp"
+#include <eigen3/Eigen/Dense>
+
 using namespace cv;
 using namespace std;
+using namespace hitcrt::kinematics;
+using namespace hitcrt::serial;
 
-// 矩形信息结构体，存储最小外接矩形及其长边方向角度（0~180°）
+// --------------------------------------------
+// 全局相机内参和畸变系数（根据实际标定填写）
+// --------------------------------------------
+static Mat cameraMatrix = (Mat_<double>(3,3) <<
+    9991.10399893341, 0, 718.418901980155,
+    0, 9991.82243368060, 558.088945484812,
+    0, 0, 1);
+static Mat distCoeffs = (Mat_<double>(5,1) <<
+    0.209283116250229,
+    0.676385453898682,
+    0, 0, 0);
+
+// --------------------------------------------
+// 矩形信息结构体
+// --------------------------------------------
 struct RectInfo {
     RotatedRect rect;
-    float longSideLen;   // 长边长度
-    float shortSideLen;  // 短边长度
-    float orientation;   // 长边方向角度（度，范围[0,180)）
+    float longSideLen;
+    float shortSideLen;
+    float orientation;
     float area;
 };
 
-/**
- * 获取红色的HSV掩码（处理红色在色环两端的特性）
- * @param hsv HSV图像
- * @return 红色区域的二值掩码
- */
+// --------------------------------------------
+// 函数声明
+// --------------------------------------------
+Mat getRedMask(const Mat& hsv);
+float computeLongSideOrientation(const RotatedRect& rect, float& longSideLen, float& shortSideLen);
+vector<RectInfo> extractRectangles(const vector<vector<Point>>& contours, double minArea, float aspectRatioMin, float aspectRatioMax);
+bool areMatchingRects(const RectInfo& r1, const RectInfo& r2, float angleTolerance, float areaTolerance, float distanceFactor);
+bool findMatchingRectPair(const vector<RectInfo>& rects, pair<int, int>& pairIdx);
+Rect drawGreenBoundingBox(Mat& image, const RectInfo& r1, const RectInfo& r2);
+Vec3d rotationMatrixToEulerAngles(const Mat& R);
+bool solvePnPForRect(const vector<Point2f>& imgPoints, float objectWidth, float objectHeight,
+                     Mat& rvec, Mat& tvec);
+Mat processImage(Mat image, double& pitch, double& yaw, double& distance, Mat& rvec, Mat& tvec);
+
+// --------------------------------------------
+// 颜色掩码
+// --------------------------------------------
 Mat getRedMask(const Mat& hsv) {
     Mat mask1, mask2;
-    // 红色范围1: 0~10
     inRange(hsv, Scalar(0, 100, 100), Scalar(10, 255, 255), mask1);
-    // 红色范围2: 160~180
     inRange(hsv, Scalar(160, 100, 100), Scalar(180, 255, 255), mask2);
     return mask1 | mask2;
 }
 
-/**
- * 计算旋转矩形的最长边方向角度（0~180°）
- * @param rect 旋转矩形
- * @param longSideLen 输出长边长度
- * @param shortSideLen 输出短边长度
- * @return 长边方向角度（度）
- */
+// 计算矩形长边方向（0~180度）
 float computeLongSideOrientation(const RotatedRect& rect, float& longSideLen, float& shortSideLen) {
     float width = rect.size.width;
     float height = rect.size.height;
     if (width >= height) {
         longSideLen = width;
         shortSideLen = height;
-        // 角度范围[-90,0)，转换为[0,180)
         float angle = rect.angle;
         if (angle < 0) angle += 180.0f;
-        return angle;   // 长边与x轴夹角
+        return angle;
     } else {
         longSideLen = height;
         shortSideLen = width;
-        // 短边方向角度+90°即为长边方向
         float angle = rect.angle + 90.0f;
         if (angle >= 180.0f) angle -= 180.0f;
         if (angle < 0) angle += 180.0f;
@@ -57,14 +81,7 @@ float computeLongSideOrientation(const RotatedRect& rect, float& longSideLen, fl
     }
 }
 
-/**
- * 从轮廓中提取有效的矩形信息（面积足够大且宽高比合理）
- * @param contours 轮廓列表
- * @param minArea 最小面积阈值
- * @param aspectRatioMin 最小宽高比
- * @param aspectRatioMax 最大宽高比
- * @return 矩形信息列表
- */
+// 提取符合条件的矩形
 vector<RectInfo> extractRectangles(const vector<vector<Point>>& contours,
                                    double minArea = 500.0,
                                    float aspectRatioMin = 0.3f,
@@ -74,52 +91,35 @@ vector<RectInfo> extractRectangles(const vector<vector<Point>>& contours,
         RotatedRect rotRect = minAreaRect(contour);
         float area = rotRect.size.width * rotRect.size.height;
         if (area < minArea) continue;
-
         float longLen, shortLen;
         float orient = computeLongSideOrientation(rotRect, longLen, shortLen);
         float ratio = longLen / shortLen;
-        if (ratio < aspectRatioMin || ratio > aspectRatioMax) continue; // 不是合理的矩形
-
+        if (ratio < aspectRatioMin || ratio > aspectRatioMax) continue;
         rects.push_back({rotRect, longLen, shortLen, orient, area});
     }
     return rects;
 }
 
-/**
- * 判断两个矩形是否满足条件：
- * 1. 长边相互平行（角度差小于阈值）
- * 2. 面积近似相等（相对误差小于阈值）
- * 3. 中心距离不超过较大矩形长边的1.5倍
- */
+// 判断两个矩形是否匹配（平行、面积相近、距离合适）
 bool areMatchingRects(const RectInfo& r1, const RectInfo& r2,
                       float angleTolerance = 10.0f,
-                      float areaTolerance = 0.1f,   // 相对面积误差10%
+                      float areaTolerance = 0.1f,
                       float distanceFactor = 1.5f) {
-    // 平行性检查
     float angleDiff = std::abs(r1.orientation - r2.orientation);
     angleDiff = std::min(angleDiff, 180.0f - angleDiff);
     if (angleDiff > angleTolerance) return false;
-
-    // 面积相等检查
     float areaDiff = std::abs(r1.area - r2.area);
     float maxArea = std::max(r1.area, r2.area);
     if (areaDiff > maxArea * areaTolerance) return false;
-
-    // 距离检查
     Point2f center1 = r1.rect.center;
     Point2f center2 = r2.rect.center;
     float distance = norm(center1 - center2);
     float maxLongLen = std::max(r1.longSideLen, r2.longSideLen);
     if (distance > maxLongLen * distanceFactor) return false;
-
     return true;
 }
 
-/**
- * 查找满足条件的一对矩形
- * @param rects 所有矩形列表
- * @param pairIdx 输出一对索引，若找到则返回true
- */
+// 查找匹配的矩形对
 bool findMatchingRectPair(const vector<RectInfo>& rects, pair<int, int>& pairIdx) {
     int n = rects.size();
     for (int i = 0; i < n; ++i) {
@@ -133,10 +133,8 @@ bool findMatchingRectPair(const vector<RectInfo>& rects, pair<int, int>& pairIdx
     return false;
 }
 
-/**
- * 绘制包含两个矩形的最小绿色边界框（轴对齐）
- */
-void drawGreenBoundingBox(Mat& image, const RectInfo& r1, const RectInfo& r2) {
+// 绘制绿色外框并返回矩形
+Rect drawGreenBoundingBox(Mat& image, const RectInfo& r1, const RectInfo& r2) {
     vector<Point2f> corners(8);
     Point2f corners1[4], corners2[4];
     r1.rect.points(corners1);
@@ -147,132 +145,208 @@ void drawGreenBoundingBox(Mat& image, const RectInfo& r1, const RectInfo& r2) {
     }
     Rect boundingBox = boundingRect(corners);
     rectangle(image, boundingBox, Scalar(0, 255, 0), 2);
+    return boundingBox;
 }
 
-/**
- * 主处理函数
- * @param image 输入彩色图像（BGR格式）
- * @return 处理后的图像（在原图上绘制结果）
- */
-Mat processImage(Mat image) {
+// 旋转矩阵转欧拉角（顺序: roll, pitch, yaw）
+Vec3d rotationMatrixToEulerAngles(const Mat& R) {
+    double sy = sqrt(R.at<double>(0,0) * R.at<double>(0,0) + R.at<double>(1,0) * R.at<double>(1,0));
+    bool singular = sy < 1e-6;
+    double x, y, z;
+    if (!singular) {
+        x = atan2(R.at<double>(2,1), R.at<double>(2,2));
+        y = atan2(-R.at<double>(2,0), sy);
+        z = atan2(R.at<double>(1,0), R.at<double>(0,0));
+    } else {
+        x = atan2(-R.at<double>(1,2), R.at<double>(1,1));
+        y = atan2(-R.at<double>(2,0), sy);
+        z = 0;
+    }
+    return Vec3d(x, y, z);
+}
+
+// PnP解算，返回旋转向量和平移向量（相机坐标系）
+bool solvePnPForRect(const vector<Point2f>& imgPoints, float objectWidth, float objectHeight,
+                     Mat& rvec, Mat& tvec) {
+    if (imgPoints.size() != 4) {
+        cerr << "需要4个角点进行PnP解算" << endl;
+        return false;
+    }
+    vector<Point3f> objPoints;
+    objPoints.push_back(Point3f(-objectWidth/2,  objectHeight/2, 0));
+    objPoints.push_back(Point3f( objectWidth/2,  objectHeight/2, 0));
+    objPoints.push_back(Point3f( objectWidth/2, -objectHeight/2, 0));
+    objPoints.push_back(Point3f(-objectWidth/2, -objectHeight/2, 0));
+
+    bool success = solvePnP(objPoints, imgPoints, cameraMatrix, distCoeffs,
+                            rvec, tvec, false, SOLVEPNP_ITERATIVE);
+    if (!success) {
+        cerr << "PnP解算失败" << endl;
+    }
+    return success;
+}
+
+// 核心图像处理函数，返回处理后的图像，同时输出旋转向量和平移向量
+Mat processImage(Mat image, double& pitch, double& yaw, double& distance, Mat& rvec, Mat& tvec) {
     if (image.empty()) {
         cerr << "输入图像为空" << endl;
         return image;
     }
-
-    // 1. HSV转换并生成红色掩码
     Mat hsv;
     cvtColor(image, hsv, COLOR_BGR2HSV);
     Mat mask = getRedMask(hsv);
-
-    // 2. 膨胀处理连接邻近光点
     Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
     Mat dilated;
     dilate(mask, dilated, kernel);
-
-    // 3. 查找轮廓
     vector<vector<Point>> contours;
     findContours(dilated, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-
-    // 4. 提取矩形并筛选
     vector<RectInfo> rects = extractRectangles(contours, 500.0, 0.3f, 3.0f);
-
-    // 5. 查找符合条件的一对矩形
     pair<int, int> matchingPair;
     if (findMatchingRectPair(rects, matchingPair)) {
         const RectInfo& r1 = rects[matchingPair.first];
         const RectInfo& r2 = rects[matchingPair.second];
-        drawGreenBoundingBox(image, r1, r2);
-        cout << "找到匹配矩形对，已绘制绿色边框" << endl;
+        Rect greenBox = drawGreenBoundingBox(image, r1, r2);
+        // 获取绿色外接矩形的四个角点
+        vector<Point2f> boxCorners(4);
+        boxCorners[0] = Point2f(greenBox.x, greenBox.y);
+        boxCorners[1] = Point2f(greenBox.x + greenBox.width, greenBox.y);
+        boxCorners[2] = Point2f(greenBox.x + greenBox.width, greenBox.y + greenBox.height);
+        boxCorners[3] = Point2f(greenBox.x, greenBox.y + greenBox.height);
+        cout << "\n绿色外框角点（像素坐标）：" << endl;
+        cout << "左上: " << boxCorners[0] << endl;
+        cout << "右上: " << boxCorners[1] << endl;
+        cout << "右下: " << boxCorners[2] << endl;
+        cout << "左下: " << boxCorners[3] << endl;
+
+        // PnP解算，目标尺寸（单位：米）请根据实际修改
+        float targetWidth = 0.05f;   // 宽度5cm
+        float targetHeight = 0.05f;  // 高度5cm
+        if (solvePnPForRect(boxCorners, targetWidth, targetHeight, rvec, tvec)) {
+            // 计算距离
+            distance = norm(tvec);
+            // 计算欧拉角
+            Mat R;
+            Rodrigues(rvec, R);
+            Vec3d euler = rotationMatrixToEulerAngles(R);
+            pitch = euler[1] * 180.0 / CV_PI;
+            yaw   = euler[2] * 180.0 / CV_PI;
+            cout << "距离: " << distance << " 米" << endl;
+            cout << "Pitch (俯仰): " << fixed << setprecision(2) << pitch << " °" << endl;
+            cout << "Yaw   (偏航): " << yaw << " °" << endl;
+        } else {
+            pitch = yaw = distance = 0;
+        }
     } else {
         cout << "未找到匹配的矩形对" << endl;
+        pitch = yaw = distance = 0;
+        rvec = Mat::zeros(3, 1, CV_64F);
+        tvec = Mat::zeros(3, 1, CV_64F);
     }
-
     return image;
 }
-double getTimeSeconds() {
-    auto now = std::chrono::steady_clock::now();
-    auto duration = now.time_since_epoch();
-    return std::chrono::duration<double>(duration).count();
-}
-// // 示例使用
-// int main(int argc, char** argv) {
-//     int frame_count = 0;
-//     int total_frames = 0;
-//     io::Camera camera("/home/thatbbbbbb/projects/aruco_gimbal_project/config/camera.yaml");
-//     while (true) {
-//         double current_time = getTimeSeconds();
 
-//         cv::Mat frame;
-//         auto timestamp = std::chrono::steady_clock::now();
-//         camera.read(frame, timestamp);
-
-//         if (!frame.empty()) {
-//             frame_count++;
-//             total_frames++;
-
-//             Mat processed = processImage(frame);
-//             imshow("Red Light Bar Detection", processed);
-
-//             if (waitKey(1) == 27) break; // ESC 退出
-//         } else {
-//             cerr << "读取帧失败" << endl;
-//             break;
-//         }
-
-//         // 帧率计算（每30帧输出一次）
-//         if (frame_count % 30 == 0) {
-//             double elapsed = getTimeSeconds() - current_time;
-//             double fps = 1.0 / elapsed;
-//             cout << "处理帧数: " << frame_count << ", FPS: " << fps << endl;
-//         }
-//     }
-
-//     cout << "总共处理帧数: " << total_frames << endl;
-//     return 0;
-// }
+// --------------------------------------------
+// 主函数：读取视频，检测，逆运动学求解，串口发送
+// --------------------------------------------
 int main(int argc, char** argv) {
-    int frame_count = 0;
-    int total_frames = 0;
+    // 1. 初始化串口
+    SerialPort serial("/dev/ttyUSB0", 100);
+    if (!serial.open_port()) {
+        std::cerr << "Failed to init serial port!" << std::endl;
+        return -1;
+    }
 
-    // 直接读取你的测试视频文件
+    // 2. 初始化运动学（读取配置文件中的参数，这里用默认构造，也可以从文件读取）
+    params my_params;
+    // 如果你有配置文件，可以在这里读取并覆盖my_params
+    engineer_kinematics kin(my_params);
+
+    // 假设相机到机械臂基座的变换矩阵为单位阵（相机坐标系即基座坐标系）
+    // 若实际有外参，请替换为标定结果
+    Eigen::Isometry3d T_cam2base = Eigen::Isometry3d::Identity();
+
+    // 3. 打开视频（也可以换成相机）
     std::string videoPath = "/opt/MVS/bin/Temp/Data/MV-CS016-10UC+DA4886227/Video_20260510164431821.avi";
     cv::VideoCapture cap(videoPath);
-
     if (!cap.isOpened()) {
         std::cerr << "视频打开失败！路径：" << videoPath << std::endl;
         return -1;
     }
 
+    // 获取视频原始帧率，用于实时播放控制
+    double video_fps = cap.get(cv::CAP_PROP_FPS);
+    int delay_ms = int(1000.0 / video_fps);
+    if (delay_ms < 1) delay_ms = 30;  // 防止异常
+    std::cout << "视频帧率: " << video_fps << " fps, 延时: " << delay_ms << " ms" << std::endl;
+
+    int frame_count = 0;
+    int total_frames = 0;
+
+    // 用于存储当前关节角（弧度），初始可给任意值，用于平滑选择解
+    std::array<float, 3> current_joints = {0, 0, 0};
+
     while (true) {
-        double current_time = (double)cv::getTickCount() / cv::getTickFrequency();
+        auto start_time = std::chrono::steady_clock::now();
 
         cv::Mat frame;
-        cap >> frame;  // 从视频读帧
+        cap >> frame;
+        if (frame.empty()) break;
 
-        if (!frame.empty()) {
-            frame_count++;
-            total_frames++;
+        frame_count++;
+        total_frames++;
 
-            cv::Mat processed = processImage(frame);
-            cv::imshow("Red Light Bar Detection", processed);
+        // 处理图像，获取旋转向量、平移向量及欧拉角（用于显示）
+        Mat rvec, tvec;
+        double pitch_deg = 0, yaw_deg = 0, distance = 0;
+        cv::Mat processed = processImage(frame, pitch_deg, yaw_deg, distance, rvec, tvec);
 
-            if (cv::waitKey(1) == 27) break; // ESC 退出
-        } else {
-            std::cerr << "视频读取完毕或失败" << std::endl;
-            break;
+        if (distance > 0) {
+        // 构造目标在相机坐标系下的位姿 T_cam_target
+        Mat R_cv;
+        Rodrigues(rvec, R_cv);
+        Eigen::Matrix3d R_eigen;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                R_eigen(i, j) = R_cv.at<double>(i, j);
+        Eigen::Vector3d t_eigen(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
+
+        // ========== 添加激光相对于相机的偏移
+        t_eigen.y() += 0.07317399;   // Y方向偏移（米）
+        t_eigen.z() += 0.0185156;    // Z方向偏移（米）
+        // ============================================
+        // ✅ 正确构造 Isometry3d
+        Eigen::Isometry3d T_cam_target = Eigen::Isometry3d::Identity();
+        T_cam_target.rotate(R_eigen);
+        T_cam_target.translation() = t_eigen;
+
+        // 假设相机到基座的变换也是 Isometry3d（此处用单位阵示例）
+        Eigen::Isometry3d T_cam2base = Eigen::Isometry3d::Identity();
+
+        // 变换到基座坐标系（乘积仍为 Isometry3d）
+        Eigen::Isometry3d T_base_target = T_cam2base * T_cam_target;
+
+        // 逆运动学求解
+        std::vector<std::array<float, 3>> solutions;
+        if (kin.inverse_kinematics(T_base_target, solutions)) {
+            // ... 选择解并发送 ...
         }
+    }
+        // 显示图像
+        cv::imshow("Red Light Bar Detection", processed);
 
-        // 帧率计算（每30帧输出一次）
+        // 帧率控制：按视频原始帧率播放
+        auto end_time = std::chrono::steady_clock::now();
+        int elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        int wait_ms = std::max(1, delay_ms - elapsed_ms);
+        if (cv::waitKey(wait_ms) == 27) break;   // ESC退出
+
+        // 每30帧打印一次处理帧数
         if (frame_count % 30 == 0) {
-            double elapsed = (double)cv::getTickCount() / cv::getTickFrequency() - current_time;
-            double fps = 30.0 / elapsed;
-            std::cout << "处理帧数: " << frame_count << ", FPS: " << fps << std::endl;
+            std::cout << "已处理帧数: " << frame_count << std::endl;
         }
     }
 
     std::cout << "总共处理帧数: " << total_frames << std::endl;
-
     cap.release();
     cv::destroyAllWindows();
     return 0;
