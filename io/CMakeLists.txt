@@ -1,5 +1,6 @@
 add_library(io STATIC
     camera.cpp
+    serial_port.cpp
     hikrobot/hikrobot.cpp
 )
 

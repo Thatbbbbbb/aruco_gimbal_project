@@ -47,9 +47,9 @@ include_directories(
     ${PROJECT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/tasks
-    ${PROJECT_SOURCE_DIR}/tasks/yolos
-    ${PROJECT_SOURCE_DIR}/tasks/yolos/lightbar
+    ${PROJECT_SOURCE_DIR}/src/detect
+    ${PROJECT_SOURCE_DIR}/src/detect/yolos
+    ${PROJECT_SOURCE_DIR}/src/solve
     ${PROJECT_SOURCE_DIR}/io
     ${PROJECT_SOURCE_DIR}/io/hikrobot/include
     ${PROJECT_SOURCE_DIR}/tools
@@ -61,12 +61,12 @@ include_directories(
 )
 
 # ========== 源文件 ==========
-set(MAIN_SOURCES src/main.cpp src/serial_port.cpp)
-file(GLOB TASK_SOURCES tasks/yolos/*.cpp tasks/lightbar.cpp)
-file(GLOB IO_SOURCES io/*.cpp io/hikrobot/hikrobot.cpp)
+set(MAIN_SOURCES src/main.cpp)
+file(GLOB DETECT_SOURCES src/detect/*.cpp src/detect/yolos/*.cpp)
+file(GLOB SOLVE_SOURCES src/solve/*.cpp)
 file(GLOB TOOL_SOURCES tools/*.cpp)
 
-set(ALL_SOURCES ${MAIN_SOURCES} ${TASK_SOURCES} ${IO_SOURCES} ${TOOL_SOURCES})
+set(ALL_SOURCES ${MAIN_SOURCES} ${DETECT_SOURCES} ${SOLVE_SOURCES} ${TOOL_SOURCES})
 
 # ========== 可执行文件 ==========
 add_executable(gimbal_node ${ALL_SOURCES})
@@ -79,6 +79,7 @@ target_link_directories(gimbal_node PUBLIC
 )
 
 target_link_libraries(gimbal_node
+    io
     deploy
     ${OpenCV_LIBS}
     yaml-cpp

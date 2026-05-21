@@ -67,10 +67,10 @@ bool engineer_kinematics::inverse_kinematics(const Eigen::Isometry3d &T,std::vec
     Eigen::Vector3d vector_V1;
     Eigen::Vector3d vector_V2;
     Eigen::Vector3d vector_V3;
-    // std::cout<<"输入的矩阵\n"<<T.matrix()<<std::endl;
+    std::cout<<"输入的矩阵\n"<<T.matrix()<<std::endl;
 
     bool flag1 = get_3v_fromT(T,vector_V1,vector_V2,vector_V3);
-    // std::cout<<"算出来的三个向量\n"<<vector_V1<<"\n第二个\n"<<vector_V2<<"\n第三个\n"<<vector_V3<<std::endl;
+    std::cout<<"算出来的三个向量\n"<<vector_V1<<"\n第二个\n"<<vector_V2<<"\n第三个\n"<<vector_V3<<std::endl;
 
     if(!flag1) {
         return false;
@@ -103,9 +103,9 @@ bool engineer_kinematics::inverse_kinematics(const Eigen::Isometry3d &T,std::vec
     for(size_t i = 0; i < 2; ++i){
         for(size_t j = 0; j < 2; ++j){
             for(size_t k = 0; k < 2; ++k){
-                if(!is_final_solution({angle1[i], angle2[j], angle3[k]})){
-                    continue;
-                }
+                // if(!is_final_solution({angle1[i], angle2[j], angle3[k]})){
+                //     continue;
+                // }
                 
                 float joint_1 = angle1[i];
                 clamp_to_half_pi(joint_1);
@@ -227,7 +227,7 @@ inline bool engineer_kinematics::is_final_solution(const std::array<float, 3>& j
     // float J1 = normalize_angle_diff(joints[0]);
     // float J2 = normalize_angle_diff(joints[1]);
     // float J3 = normalize_angle_diff(joints[2]);
-
+    return true;
     // std::cout<<"输入的是1: "<<joints[0]*180*M_1_PI<<" 2:"<<joints[1]*180*M_1_PI<<" 3: "<<joints[2]*180*M_1_PI<<std::endl;
     float d12  = normalize_angle_diff(joints[1] - joints[0]);
     float d13  = normalize_angle_diff(joints[2] - joints[0]);

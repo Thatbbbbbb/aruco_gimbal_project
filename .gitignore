@@ -1,25 +1,100 @@
-# 编译产物目录
+#Program log files
+log.txt
+exp_log.txt
+
+#Program data files
+*.csv
+*.mkv
+*.avi
+*.jpg
+*.png
+*.zip
+*.tar
+*.tar.gz
+
+#CMake generated files
 build/
 bin/
 lib/
+data/
 
-# CMake临时文件
-CMakeCache.txt
-CMakeFiles/
-Makefile
-cmake_install.cmake
-install_manifest.txt
+#IDE generated files
+cmake-build-debug/
+cmake-build-release/
+.idea/
+.vscode/
+.cache/
+.history/
 
-# OpenCV 临时文件
-*.png
-*.jpg
-*.bmp
+# The rest files are generated automatically.
+# ----------------------------------------------------------------------------
 
-# 系统临时文件
-*.tmp
-*.log
-.DS_Store/
+*~
+*.autosave
+*.a
+*.core
+*.moc
+*.o
+*.obj
+*.orig
+*.rej
+*.so
+*.so.*
+*_pch.h.cpp
+*_resource.rc
+*.qm
+.#*
+*.*#
+core
+!core/
+tags
+.DS_Store
+.directory
+*.debug
+Makefile*
+*.prl
+*.app
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
 Thumbs.db
+*.res
+*.rc
+/.qmake.cache
+/.qmake.stash
 
-# 可执行文件
-gimbal_node
+# qtcreator generated files
+*.pro.user*
+
+# xemacs temporary files
+*.flc
+
+# Vim temporary files
+.*.swp
+
+# Visual Studio generated files
+*.ib_pdb_index
+*.idb
+*.ilk
+*.pdb
+*.sln
+*.suo
+*.vcproj
+*vcproj.*.*.user
+*.ncb
+*.sdf
+*.opensdf
+*.vcxproj
+*vcxproj.*
+
+# MinGW generated files
+*.Debug
+*.Release
+
+# Python byte code
+*.pyc
+
+# Binaries
+# --------
+*.dll
+*.exe

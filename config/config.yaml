@@ -19,26 +19,14 @@ detect:
   max_row_lightbars: 3
   min_top_bottom_distance: 20
   max_top_bottom_distance: 100
-# 相机内参
-camera_intrinsics:
-  fx: 9991.10399893341          # 焦距 x (像素)
-  fy: 9991.82243368060          # 焦距 y (像素)
-  cx: 718.418901980155          # 光心 x (像素)
-  cy: 558.088945484812          # 光心 y (像素)
-  image_width: 1280
-  image_height: 720
-  radial_distortion: [0.209283116250229, 0.676385453898682]  # 径向畸变系数 k1, k2, k3
-# 云台-相机外参 (相机相对于云台的安装位置)
-gimbal_camera_extrinsics:
-  translation:       # 平移向量 (米)
-    x: 0.00          # 相机相对于云台旋转中心的 X 偏移
-    y: 35.40677          # 相机相对于云台旋转中心的 Y 偏移  
-    z: 27.77338          # 相机相对于云台旋转中心的 Z 偏移
-  rotation:          # 旋转角度 (度) - 相机安装角度偏差
-    roll: 0.0
-    pitch: 0.0
-    yaw: 0.0
+# 相机内外参
+camera_matrix: [1.789950341146367e+03, 0,6.244899091043944e+02,0, 1.789941268241911e+03, 5.165767655720214e+02,0, 0, 1]
+distort_coeffs: [-0.086007586707543,0.037629005591832,6.416956508541191e-04,-3.846772859023321e-04,0.460510666430202]
 
+R_camera2gimbal: [-1, 0, 0, 0, 0, -1, 0, -1, 0]
+t_camera2gimbal: [35e-3, -35e-3, 27e-3] # 单位 m（暂定）
+
+origin2laser: 42.7e-3 # 单位 m，激光器相对球心的距离
 # 测距参数
 depth_estimation:
   default_distance: 10.0   # 默认距离（米），可根据需要调整
