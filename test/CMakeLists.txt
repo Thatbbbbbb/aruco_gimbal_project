@@ -87,3 +87,26 @@ target_include_directories(kinematic_test PRIVATE
 )
 
 target_link_libraries(kinematic_test PRIVATE pthread)
+
+# ========== flow_test (end-to-end synthetic flow) ==========
+add_executable(flow_test
+    flow_test.cpp
+    ${TOOLS_SOURCES}
+)
+
+target_link_libraries(flow_test PRIVATE ${COMMON_LIBS})
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    target_link_directories(flow_test PRIVATE ${CMAKE_SOURCE_DIR}/io/hikrobot/lib/amd64)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    target_link_directories(flow_test PRIVATE ${CMAKE_SOURCE_DIR}/io/hikrobot/lib/arm64)
+endif()
+
+target_include_directories(flow_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tools
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/io
+    ${EIGEN3_INCLUDE_DIRS}
+)
+
+target_link_libraries(flow_test PRIVATE pthread)
